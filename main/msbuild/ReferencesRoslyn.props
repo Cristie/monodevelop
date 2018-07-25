@@ -1,7 +1,6 @@
 <Project>
 
   <PropertyGroup>
-    <NuGetVersionRoslyn>2.3.2</NuGetVersionRoslyn>
     <ReferencesRoslynCopyToOutput Condition="$(ReferencesRoslynCopyToOutput) == ''">false</ReferencesRoslynCopyToOutput>
   </PropertyGroup>
 
@@ -12,6 +11,10 @@
     </Reference>
     <Reference Include="Microsoft.CodeAnalysis.CSharp">
       <HintPath>$(PackagesDirectory)\Microsoft.CodeAnalysis.CSharp.$(NuGetVersionRoslyn)\lib\netstandard1.3\Microsoft.CodeAnalysis.CSharp.dll</HintPath>
+      <Private>$(ReferencesRoslynCopyToOutput)</Private>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.CSharp.EditorFeatures">
+      <HintPath>$(PackagesDirectory)\Microsoft.CodeAnalysis.EditorFeatures.$(NuGetVersionRoslyn)\lib\net46\Microsoft.CodeAnalysis.CSharp.EditorFeatures.dll</HintPath>
       <Private>$(ReferencesRoslynCopyToOutput)</Private>
     </Reference>
     <Reference Include="Microsoft.CodeAnalysis.CSharp.Features">

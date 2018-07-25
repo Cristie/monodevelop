@@ -29,6 +29,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using MonoDevelop.Core;
 using MonoDevelop.Core.Text;
 using MonoDevelop.Ide.Editor;
 
@@ -121,7 +122,7 @@ namespace Mono.TextEditor.Vi
 			
 			DocumentLine seg = data.Document.GetLine (startLine);
 			startOffset = seg.Offset;
-			StringBuilder sb = new StringBuilder (data.Document.GetTextAt (seg).TrimEnd ());
+			StringBuilder sb = StringBuilderCache.Allocate (data.Document.GetTextAt (seg).TrimEnd ());
 			//lastSpaceOffset = startOffset + sb.Length;
 			
 			for (int i = startLine + 1; i <= endLine; i++) {
@@ -132,7 +133,7 @@ namespace Mono.TextEditor.Vi
 			}
 			length = (seg.Offset - startOffset) + seg.Length;
 			// TODO: handle conversion issues ? 
-			data.Replace (startOffset, length, sb.ToString ());
+			data.Replace (startOffset, length, StringBuilderCache.ReturnAndFree (sb));
 		}
 		
 		public static void ToggleCase (TextEditorData data)
@@ -141,7 +142,7 @@ namespace Mono.TextEditor.Vi
 				if (!data.CanEditSelection)
 					return;
 				
-				StringBuilder sb = new StringBuilder (data.SelectedText);
+				StringBuilder sb = StringBuilderCache.Allocate (data.SelectedText);
 				for (int i = 0; i < sb.Length; i++) {
 					char ch = sb [i];
 					if (Char.IsLower (ch))
@@ -149,7 +150,7 @@ namespace Mono.TextEditor.Vi
 					else if (Char.IsUpper (ch))
 						sb [i] = Char.ToLower (ch);
 				}
-				data.Replace (data.SelectionRange.Offset, data.SelectionRange.Length, sb.ToString ());
+				data.Replace (data.SelectionRange.Offset, data.SelectionRange.Length, StringBuilderCache.ReturnAndFree (sb));
 			} else if (data.CanEdit (data.Caret.Line)) {
 				char ch = data.Document.GetCharAt (data.Caret.Offset);
 				if (Char.IsLower (ch))
@@ -231,84 +232,6 @@ namespace Mono.TextEditor.Vi
 			{'[', ']'},
 			{'<', '>'},
 		};
-
-		public static Action<TextEditorData> OuterSymbol (char command) 
-		{
-			return data =>
-			{
-				SymbolBlock result;
-				if (!TryFindSymbolBlock (data, command, out result)) return;
-
-				data.SelectionRange = result.GetOuterTextSegment ();
-			};
-		}
-
-		public static Action<TextEditorData> InnerSymbol (char command) 
-		{
-			return data =>
-			{
-				SymbolBlock result;
-				if (!TryFindSymbolBlock (data, command, out result)) return;
-
-				data.SelectionRange = result.GetInnerTextSegment ();
-			};
-		}
-
-		struct SymbolBlock
-		{
-			public int StartOffset, EndOffset;
-			public DocumentLine StartLine, EndLine;
-			bool IsSameLine { get { return StartLine == EndLine; } }
-
-			public ISegment GetInnerTextSegment()
-			{
-				var length = IsSameLine ? EndOffset - StartOffset : EndLine.PreviousLine.EndOffset - StartOffset;
-				return new TextSegment (StartOffset + 1, length - 1);
-			}
-
-			public ISegment GetOuterTextSegment ()
-			{
-				return new TextSegment (StartOffset, (EndOffset - StartOffset) + 1);
-			}
-		}
-
-		static bool TryFindSymbolBlock (TextEditorData data, char command, out SymbolBlock result)
-		{
-			// TODO - may be needed for a vi mode plugin.
-			//char end, begin;
-			//if (!BeginToEndCharMap.TryGetValue (command, out end)) end = command;
-			//if (!EndToBeginCharMap.TryGetValue (command, out begin)) begin = command;
-
-			//var offset = data.Caret.Offset;
-
-			//var startTokenOffset = ParseForChar(data, offset, 0, end, begin, false);
-			//var endTokenOffset = ParseForChar(data, offset, data.Length, begin, end, true);
-
-			//// Use the editor's FindMatchingBrace built-in functionality. It's better at handling erroneous braces
-			//// inside quotes. We still need to do the above paragraph because we needed to find the braces.
-			//var matchingStartBrace = endTokenOffset.HasValue ? data.Document.GetMatchingBracketOffset(
-			//	endTokenOffset.GetValueOrDefault ()) : -1;
-			//if (matchingStartBrace >= 0 && (!startTokenOffset.HasValue 
-			//                                || matchingStartBrace != startTokenOffset.GetValueOrDefault ()))
-			//	startTokenOffset = matchingStartBrace;
-
-			//var matchingEndBrace = startTokenOffset.HasValue && data.GetCharAt (offset) != end ? 
-			//	data.Document.GetMatchingBracketOffset(startTokenOffset.GetValueOrDefault ()) : -1;
-			//if (matchingEndBrace >= 0 && (!endTokenOffset.HasValue 
-			//                              || matchingEndBrace != endTokenOffset.GetValueOrDefault ()))
-			//	endTokenOffset = matchingEndBrace;
-
-			//if (!startTokenOffset.HasValue || !endTokenOffset.HasValue) throw new Exception();
-
-			result = new SymbolBlock ();
-			//{ 
-			//	StartOffset = startTokenOffset.GetValueOrDefault (),
-			//	EndOffset = endTokenOffset.GetValueOrDefault (),
-			//	StartLine = data.GetLineByOffset (startTokenOffset.GetValueOrDefault()),
-			//	EndLine = data.GetLineByOffset (endTokenOffset.GetValueOrDefault()),
-			//};
-			return true;
-		}
 
 		static int? ParseForChar(TextEditorData data, int fromOffset, int toOffset, char oppositeToken, char findToken, bool forward)
 		{

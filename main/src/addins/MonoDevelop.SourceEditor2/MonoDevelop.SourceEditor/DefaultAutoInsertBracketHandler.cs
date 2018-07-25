@@ -37,13 +37,10 @@ namespace MonoDevelop.SourceEditor
 		const string openBrackets = "{[('\"";
 		const string closingBrackets = "}])'\"";
 
-		public override bool CanHandle (TextEditor editor)
-		{
-			return true;
-		}
-
 		public override bool Handle (TextEditor editor, DocumentContext ctx, KeyDescriptor descriptor)
 		{
+			if (descriptor.KeyChar == '\'' && editor.MimeType == "text/fsharp")
+				return false;
 			int braceIndex = openBrackets.IndexOf (descriptor.KeyChar);
 			if (braceIndex < 0)
 				return false;

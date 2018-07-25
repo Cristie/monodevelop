@@ -1,15 +1,15 @@
 ﻿namespace MonoDevelop.FSharp
 open System
+open System.Collections.Generic
 open System.IO
 open System.Diagnostics
 open Microsoft.FSharp.Compiler
 open Microsoft.FSharp.Compiler.SourceCodeServices
-open ExtCore
 open ExtCore.Control
 open ExtCore.Control.Collections
 open MonoDevelop.Core
 open MonoDevelop.Ide
-open MonoDevelop.Ide.Editor
+open MonoDevelop.Ide.TypeSystem
 open MonoDevelop.Projects
 open MonoDevelop.FSharp.Shared
 
@@ -43,33 +43,19 @@ module ServiceSettings =
 /// Provides default empty/negative results if information is missing.
 type ParseAndCheckResults (infoOpt : FSharpCheckFileResults option, parseResults : FSharpParseFileResults option) =
 
-    /// Get declarations at the current location in the specified document and the long ident residue
-    /// e.g. The incomplete ident One.Two.Th will return Th
-    member x.GetDeclarations(line, col, lineStr) =
-        match infoOpt, parseResults with
-        | Some (checkResults), parseResults ->
-            let longName,residue = Parsing.findLongIdentsAndResidue(col, lineStr)
-            LoggingService.logDebug "GetDeclarations: '%A', '%s'" longName residue
-            // Get items & generate output
-            try
-                let results =
-                    Async.RunSynchronously (checkResults.GetDeclarationListInfo( parseResults, line, col, lineStr, longName, residue, fun () -> []), timeout = ServiceSettings.blockingTimeout )
-                Some (results, residue)
-            with :? TimeoutException -> None
-        | None, _ -> None
-
     /// Get the symbols for declarations at the current location in the specified document and the long ident residue
     /// e.g. The incomplete ident One.Two.Th will return Th
     member x.GetDeclarationSymbols(line, col, lineStr) =
         async {
             match infoOpt, parseResults with
             | Some checkResults, parseResults ->
-                  let longName,residue = Parsing.findLongIdentsAndResidue(col, lineStr)
-                  LoggingService.logDebug "GetDeclarationSymbols: '%A', '%s'" longName residue
                   // Get items & generate output
+                  let partialName = QuickParse.GetPartialLongNameEx(lineStr, col-1)
+
                   try
-                      let! results = checkResults.GetDeclarationListSymbols(parseResults, line, col, lineStr, longName, residue, fun (_,_) -> false)
-                      return Some (results, residue)
+                      let! results = checkResults.GetDeclarationListSymbols(parseResults, line, lineStr, partialName)
+
+                      return Some (results, partialName.PartialIdent)
                   with :? TimeoutException -> return None
             | None, _ -> return None
         }
@@ -202,7 +188,7 @@ type LanguageService(dirtyNotify, _extraProjectInfo) as x =
     let fakeDateTimeRepresentingTimeLoaded proj = DateTime(abs (int64 (match proj with null -> 0 | _ -> proj.GetHashCode())) % 103231L)
     let checkProjectResultsCache = Collections.Generic.Dictionary<string, _>()
 
-    let projectChecked (filename, _) =
+    let projectChecked filename =
         let computation =
             async {
                 let displayname = Path.GetFileName filename
@@ -238,7 +224,17 @@ type LanguageService(dirtyNotify, _extraProjectInfo) as x =
                     with exn ->
                         LoggingService.LogDebug(sprintf "LanguageService: Error", exn)
                     | None -> () }
-        Async.Start computation
+        Async.StartAndLogException computation
+
+    let loadingProjects = HashSet<string>()
+
+    let showStatusIcon projectFileName =
+        if loadingProjects.Add projectFileName then
+            TypeSystemService.ShowTypeInformationGatheringIcon()
+
+    let hideStatusIcon projectFileName =
+        if loadingProjects.Remove projectFileName then
+            TypeSystemService.HideTypeInformationGatheringIcon()
 
     // Create an instance of interactive checker. The callback is called by the F# compiler service
     // when its view of the prior-typechecking-state of the start of a file has changed, for example
@@ -252,7 +248,9 @@ type LanguageService(dirtyNotify, _extraProjectInfo) as x =
         checker.FileParsed.Add (fun (filename, _) -> LoggingService.logDebug "LanguageService: File parsed: %s" filename)
         checker.FileChecked.Add (fun (filename, _) -> LoggingService.logDebug "LanguageService: File type checked: %s" filename)
 #endif
-        checker.ProjectChecked.Add projectChecked
+        checker.ProjectChecked.Add (fun (filename, _) -> 
+            projectChecked filename
+            hideStatusIcon filename)
         checker
 
     /// When creating new script file on Mac, the filename we get sometimes
@@ -282,6 +280,8 @@ type LanguageService(dirtyNotify, _extraProjectInfo) as x =
 
     member x.Checker = checker
 
+    member x.HideStatusIcon = hideStatusIcon
+
     member x.ClearProjectInfoCache() =
         LoggingService.logDebug "LanguageService: Clearing ProjectInfoCache"
         projectInfoCache := ExtCore.Caching.LruCache.create 50u
@@ -295,6 +295,9 @@ type LanguageService(dirtyNotify, _extraProjectInfo) as x =
             // We are in a project - construct options using current properties
             else x.GetProjectCheckerOptions(projFilename)
         opts
+
+    member x.GetParsingOptionsFromProjectOptions(projectOptions) =
+        checker.GetParsingOptionsFromProjectOptions projectOptions
 
     /// Constructs options for the interactive checker for the given script file in the project under the given configuration.
     member x.GetScriptCheckerOptions(fileName, projFilename, source) =
@@ -393,6 +396,7 @@ type LanguageService(dirtyNotify, _extraProjectInfo) as x =
                 projectInfoCache := cache
                 Some entry
             | _, cache ->
+                showStatusIcon projFilename
                 let project =
                     IdeApp.Workspace.GetAllProjects()
                     |> Seq.tryFind (fun p -> p.FileName.FullPath.ToString() = projFilename)
@@ -480,7 +484,7 @@ type LanguageService(dirtyNotify, _extraProjectInfo) as x =
                             return Some(result)
                         with
                         | :? System.TimeoutException ->
-                            LoggingService.logDebug "LanguageService: GetTypedParseResultWithTimeout: No stale results - typechecking with timeout - timeout exception occured"
+                            LoggingService.logDebug "LanguageService: GetTypedParseResultWithTimeout: No stale results - typechecking with timeout - timeout exception occurred"
                             return None
                     | None ->
                           LoggingService.logDebug "LanguageService: GetTypedParseResultWithTimeout: No stale results - typechecking without timeout"
@@ -533,11 +537,13 @@ type LanguageService(dirtyNotify, _extraProjectInfo) as x =
         let options = x.GetCheckerOptions(filename, projectFilename, source)
         match options with
         | Some opts ->
-            checker.MatchBraces(filename, source, opts)
+            let parseOptions, _errors = x.GetParsingOptionsFromProjectOptions opts
+            checker.MatchBraces(filename, source, parseOptions)
         | None -> async { return [||] }
 
     /// Get all symbols derived from the specified symbol in the current project and optionally all dependent projects
     member x.GetDerivedSymbolsInProject(projectFilename, file, source, symbolAtCaret:FSharpSymbol, ?dependentProjects) =
+        LoggingService.logDebug "Finding derived symbols in %s : Symbol %s" projectFilename symbolAtCaret.DisplayName
         let predicate (symbolUse: FSharpSymbolUse) =
             try
                 match symbolAtCaret with
@@ -547,9 +553,9 @@ type LanguageService(dirtyNotify, _extraProjectInfo) as x =
                         let isOverrideOrDefault = mfv.IsOverrideOrExplicitInterfaceImplementation
                         let baseTypeMatch() =
                             maybe {
-                                let! ent = mfv.EnclosingEntity
+                                let! ent = mfv.DeclaringEntity
                                 let! bt = ent.BaseType
-                                let! carentEncEnt = caretmfv.EnclosingEntity
+                                let! carentEncEnt = caretmfv.DeclaringEntity
                                 return carentEncEnt.IsEffectivelySameAs bt.TypeDefinition }
 
                         let nameMatch = mfv.DisplayName = caretmfv.DisplayName
@@ -618,7 +624,7 @@ type LanguageService(dirtyNotify, _extraProjectInfo) as x =
 
         let isAnExtensionMethod (mfv:FSharpMemberOrFunctionOrValue) (parentEntity:FSharpSymbol) =
             let isExt = mfv.IsExtensionMember
-            let extslogicalEntity = mfv.LogicalEnclosingEntity
+            let extslogicalEntity = mfv.ApparentEnclosingEntity
             let sameLogicalParent = parentEntity.IsEffectivelySameAs extslogicalEntity
             isExt && sameLogicalParent
 

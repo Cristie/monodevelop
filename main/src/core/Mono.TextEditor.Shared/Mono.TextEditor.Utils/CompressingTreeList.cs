@@ -37,7 +37,7 @@ namespace Mono.TextEditor.Utils
 
 		internal class CompressingNode : IRedBlackTreeNode
 		{
-			internal readonly T value;
+			internal T value;
 			internal int count, totalCount;
 
 			public CompressingNode (T value, int count)
@@ -115,7 +115,7 @@ namespace Mono.TextEditor.Utils
 
 		}
 
-		internal RedBlackTree<CompressingNode> tree = new RedBlackTree<CompressingNode> ();
+		internal readonly RedBlackTree<CompressingNode> tree = new RedBlackTree<CompressingNode> ();
 
 		/// <summary>
 		/// Creates a new CompressingTreeList instance.
@@ -311,7 +311,11 @@ namespace Mono.TextEditor.Utils
 				return GetNode (ref index).value;
 			}
 			set {
-				RemoveAt (index);
+				if (index < Count) {
+					RemoveAt (index);
+				} else {
+					InsertRange (Count, index - Count, default (T));
+				}
 				Insert (index, value);
 			}
 		}

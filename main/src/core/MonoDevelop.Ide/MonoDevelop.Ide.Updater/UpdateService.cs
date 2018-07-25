@@ -51,7 +51,7 @@ namespace MonoDevelop.Ide.Updater
 
 		public static bool AutoCheckForUpdates {
 			get {
-				return PropertyService.Get ("MonoDevelop.Ide.AddinUpdater.CheckForUpdates", true);
+				return PropertyService.Get ("MonoDevelop.Ide.AddinUpdater.CheckForUpdates", true) && Runtime.Preferences.EnableUpdaterForCurrentSession;
 			}
 			set {
 				PropertyService.Set ("MonoDevelop.Ide.AddinUpdater.CheckForUpdates", value);
@@ -78,10 +78,30 @@ namespace MonoDevelop.Ide.Updater
 
 		public static UpdateLevel UpdateLevel {
 			get {
-				return PropertyService.Get ("MonoDevelop.Ide.AddinUpdater.UpdateLevel", UpdateLevel.Stable);
+				return UpdateService.UpdateChannel.ToUpdateLevel ();
+			}
+		}
+
+		public static UpdateChannel UpdateChannel {
+			get {
+				// Returned Saved Update Level
+				// If empty, use whatever "UpdateLevel" was set to.
+				var updateChannelId = PropertyService.Get<string> ("MonoDevelop.Ide.AddinUpdater.UpdateChannel");
+				if (string.IsNullOrEmpty (updateChannelId))
+					return UpdateChannel.FromUpdateLevel (PropertyService.Get ("MonoDevelop.Ide.AddinUpdater.UpdateLevel", UpdateLevel.Stable));
+				if (UpdateChannel.Stable.Id == updateChannelId)
+					return UpdateChannel.Stable;
+				else if (UpdateChannel.Beta.Id == updateChannelId)
+					return UpdateChannel.Beta;
+				else if (UpdateChannel.Alpha.Id == updateChannelId)
+					return UpdateChannel.Alpha;
+				else if (UpdateChannel.Test.Id == updateChannelId)
+					return UpdateChannel.Test;
+				else
+					return new UpdateChannel (updateChannelId, updateChannelId, "", 0);
 			}
 			set {
-				PropertyService.Set ("MonoDevelop.Ide.AddinUpdater.UpdateLevel", value);
+				PropertyService.Set ("MonoDevelop.Ide.AddinUpdater.UpdateChannel", value.Id);
 			}
 		}
 

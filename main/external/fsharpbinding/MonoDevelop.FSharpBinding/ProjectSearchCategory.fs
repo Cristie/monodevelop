@@ -78,7 +78,7 @@ module Search =
     let correctDisplayName (symbol:FSharpSymbolUse) =
         match symbol with
         | SymbolUse.Constructor c ->
-            match c.EnclosingEntity with
+            match c.DeclaringEntity with
             | Some ent -> ent.DisplayName
             | _ -> LoggingService.LogError(sprintf "Constructor with no EnclosingEntity: %s" c.DisplayName)
                    c.DisplayName
@@ -172,8 +172,8 @@ type SymbolSearchResult(match', matchedString, rank, symbol:FSharpSymbolUse) =
         | SymbolUse.Val _ -> getImage "md-fs-field" //NOTE: Maybe make this a normal field icon?
         | _ -> getImage Stock.Event.Name
 
-    override x.GetTooltipInformation(_token) = 
-        SymbolTooltips.getTooltipInformation symbol |> Async.StartAsTask
+    override x.GetTooltipInformation(token) = 
+        SymbolTooltips.getTooltipInformation symbol |> StartAsyncAsTask token
         
     override x.Offset = fst (offsetAndLength.Force())
     override x.Length = snd (offsetAndLength.Force())

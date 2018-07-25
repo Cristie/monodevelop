@@ -41,6 +41,7 @@ using MonoDevelop.Core.Text;
 using Gtk;
 using System.Threading;
 using System.Threading.Tasks;
+using MonoDevelop.Ide.Editor.Highlighting;
 
 namespace MonoDevelop.SourceEditor
 {
@@ -51,29 +52,35 @@ namespace MonoDevelop.SourceEditor
 		{
 			if (ctx == null)
 				return null;
-			var analysisDocument = ctx.ParsedDocument;
+			var analysisDocument = ctx.AnalysisDocument;
 			if (analysisDocument == null)
 				return null;
-			var unit = analysisDocument.GetAst<SemanticModel> ();
+			var unit = await analysisDocument.GetSemanticModelAsync (token);
 			if (unit == null)
 				return null;
-			
-			var root = unit.SyntaxTree.GetRoot (token);
-			SyntaxToken syntaxToken;
-			try {
-				syntaxToken = root.FindToken (offset);
-			} catch (ArgumentOutOfRangeException) {
-				return null;
-			}
-			if (!syntaxToken.Span.IntersectsWith (offset))
-				return null;
-			var node = GetBestFitResolveableNode (syntaxToken.Parent);
-			var symbolInfo = unit.GetSymbolInfo (node, token);
-			var symbol = symbolInfo.Symbol ?? unit.GetDeclaredSymbol (node, token);
-			var tooltipInformation = await CreateTooltip (symbol, syntaxToken, editor, ctx, offset);
-			if (tooltipInformation == null || string.IsNullOrEmpty (tooltipInformation.SignatureMarkup))
-				return null;
-			return new TooltipItem (tooltipInformation, syntaxToken.Span.Start, syntaxToken.Span.Length);
+
+			int caretOffset = editor.CaretOffset;
+			EditorTheme theme = SyntaxHighlightingService.GetIdeFittingTheme (editor.Options.GetEditorTheme ());
+			return await Task.Run (async () => {
+				var root = unit.SyntaxTree.GetRoot (token);
+				SyntaxToken syntaxToken;
+				try {
+					syntaxToken = root.FindToken (offset);
+				} catch (ArgumentOutOfRangeException) {
+					return null;
+				}
+				if (!syntaxToken.Span.Contains (offset))
+					return null;
+				var node = GetBestFitResolveableNode (syntaxToken.Parent);
+				var symbolInfo = unit.GetSymbolInfo (node, token);
+				var symbol = symbolInfo.Symbol;
+				if (symbol == null && syntaxToken.IsKind (SyntaxKind.IdentifierToken))
+					symbol = unit.GetDeclaredSymbol (node, token);
+				var tooltipInformation = await CreateTooltip (symbol, syntaxToken, caretOffset, theme, ctx, offset);
+				if (tooltipInformation == null || string.IsNullOrEmpty (tooltipInformation.SignatureMarkup))
+					return null;
+				return new TooltipItem (tooltipInformation, syntaxToken.Span.Start, syntaxToken.Span.Length);
+			});
 		}
 
 		static SyntaxNode GetBestFitResolveableNode (SyntaxNode node)
@@ -123,7 +130,7 @@ namespace MonoDevelop.SourceEditor
 			return result;
 		}
 
-		async Task<TooltipInformation> CreateTooltip (ISymbol symbol, SyntaxToken token, TextEditor editor, DocumentContext doc, int offset)
+		async Task<TooltipInformation> CreateTooltip (ISymbol symbol, SyntaxToken token, int caretOffset, EditorTheme theme, DocumentContext doc, int offset)
 		{
 			try {
 				TooltipInformation result;
@@ -139,7 +146,7 @@ namespace MonoDevelop.SourceEditor
 					return result;
 				
 				if (symbol != null) {
-					result = await QuickInfoProvider.GetQuickInfoAsync (editor, doc, symbol);
+					result = await QuickInfoProvider.GetQuickInfoAsync (caretOffset, theme, doc, symbol);
 				}
 				
 				return result;
@@ -154,11 +161,6 @@ namespace MonoDevelop.SourceEditor
 			var win = (TooltipInformationWindow)tipWindow;
 			requiredWidth = (int)win.Width;
 			xalign = 0.5;
-		}
-
-		public override bool IsInteractive(TextEditor editor, Components.Window tipWindow)
-		{
-			return true;
 		}
 		#endregion
 

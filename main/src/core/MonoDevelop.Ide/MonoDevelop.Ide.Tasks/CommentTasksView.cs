@@ -37,6 +37,7 @@ using MonoDevelop.Core;
 using MonoDevelop.Projects;
 using MonoDevelop.Ide;
 using MonoDevelop.Ide.Gui;
+using MonoDevelop.Ide.Gui.Components;
 using MonoDevelop.Ide.TypeSystem;
 using System.Linq;
 using MonoDevelop.Ide.Editor;
@@ -59,13 +60,15 @@ namespace MonoDevelop.Ide.Tasks
 			Count
 		}
 
-		MonoDevelop.Ide.Gui.Components.PadTreeView view;
+		static readonly string restoreID = "Monodevelop.CommentTasksColumns";
+
+		PadTreeView view;
 		ListStore store;
 		TreeModelSort sortModel;
 
 		Gdk.Color highPrioColor, normalPrioColor, lowPrioColor;
 
-		Dictionary<ToggleAction, int> columnsActions = new Dictionary<ToggleAction, int> ();
+		Dictionary<ContextMenuItem, int> columnsActions;
 		Clipboard clipboard;
 		
 		TaskStore comments = new TaskStore ();
@@ -86,11 +89,9 @@ namespace MonoDevelop.Ide.Tasks
 			TaskService.CommentTasksChanged += OnCommentTasksChanged;
 			CommentTag.SpecialCommentTagsChanged += OnCommentTagsChanged;
 
+			IdeApp.Workspace.LastWorkspaceItemClosed += LastWorkspaceItemClosed;
 			MonoDevelopWorkspace.LoadingFinished += OnWorkspaceItemLoaded;
 			IdeApp.Workspace.WorkspaceItemUnloaded += OnWorkspaceItemUnloaded;
-			IdeApp.Workspace.LastWorkspaceItemClosed += LastWorkspaceItemClosed;
-			IdeApp.Workbench.DocumentOpened += WorkbenchDocumentOpened;
-			IdeApp.Workbench.DocumentClosed += WorkbenchDocumentClosed;
 
 			highPrioColor = StringToColor (IdeApp.Preferences.UserTasksHighPrioColor);
 			normalPrioColor = StringToColor (IdeApp.Preferences.UserTasksNormalPrioColor);
@@ -110,7 +111,7 @@ namespace MonoDevelop.Ide.Tasks
 			view = new MonoDevelop.Ide.Gui.Components.PadTreeView (sortModel);
 			view.RulesHint = true;
 			view.SearchColumn = (int)Columns.Description;
-			view.DoPopupMenu = (evt) => IdeApp.CommandService.ShowContextMenu (view, evt, CreateMenu ());
+			view.DoPopupMenu = ShowPopupMenu;
 			view.RowActivated += new RowActivatedHandler (OnRowActivated);
 
 			TreeViewColumn col;
@@ -159,41 +160,9 @@ namespace MonoDevelop.Ide.Tasks
 			};
 		}
 
-		void WorkbenchDocumentClosed (object sender, DocumentEventArgs e)
-		{
-			e.Document.DocumentParsed -= HandleDocumentParsed;
-		}
-
-		void WorkbenchDocumentOpened (object sender, DocumentEventArgs e)
-		{
-			e.Document.DocumentParsed += HandleDocumentParsed;
-		}
-
-		void HandleDocumentParsed (object sender, EventArgs e)
-		{
-			var doc = (Document)sender;
-			var pd = doc.ParsedDocument;
-			var project = doc.Project;
-			if (pd == null || project == null)
-				return;
-			ProjectCommentTags tags;
-			if (!projectTags.TryGetValue (project, out tags))
-				return;
-			var token = src.Token;
-			var file = doc.FileName;
-			Task.Run (async () => {
-				try {
-					tags.UpdateTags (project, file, await pd.GetTagCommentsAsync (token).ConfigureAwait (false));
-				} catch (TaskCanceledException) {
-				} catch (AggregateException ae) {
-					ae.Flatten ().Handle (x => x is TaskCanceledException);
-				}
-			});
-		}
-
 		void LoadColumnsVisibility ()
 		{
-			string columns = (string)PropertyService.Get ("Monodevelop.CommentTasksColumns", "TRUE;TRUE;TRUE;TRUE");
+			string columns = (string)PropertyService.Get (restoreID, "TRUE;TRUE;TRUE;TRUE");
 			string[] tokens = columns.Split (new char[] {';'}, StringSplitOptions.RemoveEmptyEntries);
 			if (tokens.Length == 4 && view != null && view.Columns.Length == 4)
 			{
@@ -205,93 +174,34 @@ namespace MonoDevelop.Ide.Tasks
 				}
 			}
 		}
-
-		void StoreColumnsVisibility ()
-		{
-			string columns = String.Format ("{0};{1};{2};{3}",
-			                                view.Columns[(int)Columns.Line].Visible,
-			                                view.Columns[(int)Columns.Description].Visible,
-			                                view.Columns[(int)Columns.File].Visible,
-			                                view.Columns[(int)Columns.Path].Visible);
-			PropertyService.Set ("Monodevelop.CommentTasksColumns", columns);
-		}
 		
 		void OnWorkspaceItemLoaded (object sender, EventArgs e)
 		{
 			comments.BeginTaskUpdates ();
 			try {
-				foreach (var sln in IdeApp.Workspace.GetAllSolutions ())
-					LoadSolutionContents (sln);
+				CommentTasksProvider.LoadCachedContents ();
+				foreach (var sln in IdeApp.Workspace.GetAllSolutions ()) {
+					CommentTasksProvider.Legacy.LoadSolutionContents (sln);
+					loadedSlns.Add (sln);
+				}
 			}
 			finally {
 				comments.EndTaskUpdates ();
 			}
 		}
 
-		Dictionary<Project, ProjectCommentTags> projectTags = new Dictionary<Project, ProjectCommentTags> ();
-		CancellationTokenSource src = new CancellationTokenSource ();
-		void UpdateCommentTagsForProject (Solution solution, Project project, CancellationToken token)
-		{
-			if (token.IsCancellationRequested)
-				return;
-			ProjectCommentTags tags;
-			if (!projectTags.TryGetValue (project, out tags)) {
-				tags = new ProjectCommentTags ();
-				projectTags [project] = tags;
-			}
-			var files = project.Files.ToArray ();
-			Task.Run (async () => {
-				try {
-					await tags.UpdateAsync (project, files, token);
-				} catch (TaskCanceledException) {
-				} catch (AggregateException ae) {
-					ae.Flatten ().Handle (x => x is TaskCanceledException);
-				} catch (Exception e) {
-					LoggingService.LogError ("Error while updating comment tags.", e); 
-				}
-			});
-		}
-		
-		void LoadSolutionContents (Solution sln)
-		{
-			src.Cancel ();
-			src = new CancellationTokenSource ();
-			var token = src.Token;
-
-			loadedSlns.Add (sln);
-			Task.Run (delegate {
-				sln.SolutionItemAdded += delegate(object sender, SolutionItemChangeEventArgs e) {
-					var newProject = e.SolutionItem as Project;
-					if (newProject == null)
-						return;
-					UpdateCommentTagsForProject (sln, newProject, token);
-				};
-
-				// Load all tags that are stored in pidb files
-				foreach (Project p in sln.GetAllProjects ()) {
-					UpdateCommentTagsForProject (sln, p, token);
-				}
-			});
-		}
-		
 		void OnWorkspaceItemUnloaded (object sender, WorkspaceItemEventArgs e)
 		{
 			comments.RemoveItemTasks (e.Item, true);
 
-			var solution = e.Item as Solution;
-			if (solution != null) {
+			if (e.Item is Solution solution) {
 				loadedSlns.Remove (solution);
-
-				foreach (Project p in solution.GetAllProjects ()) {
-					projectTags.Remove (p);
-				}
 			}
 		}
 		
 		void LastWorkspaceItemClosed (object sender, EventArgs e)
 		{
 			loadedSlns.Clear ();
-			projectTags.Clear ();
 		}
 
 		void OnCommentTasksChanged (object sender, CommentTasksChangedEventArgs args)
@@ -425,87 +335,34 @@ namespace MonoDevelop.Ide.Tasks
 			return TreeIter.Zero;
 		}
 
-		Menu CreateMenu ()
+		void ShowPopupMenu (Gdk.EventButton evnt)
 		{
-			var group = new ActionGroup ("Popup");
+			var menu = new ContextMenu ();
+			columnsActions = new Dictionary<ContextMenuItem, int> ();
+
+			var copy = new ContextMenuItem (GettextCatalog.GetString ("Copy Task"));
+			copy.Clicked += OnGenTaskCopied;
+			menu.Add (copy);
+
+			var jump = new ContextMenuItem (GettextCatalog.GetString ("_Go to Task"));
+			jump.Clicked += OnGenTaskJumpto;
+			menu.Add (jump);
+
+			var delete = new ContextMenuItem (GettextCatalog.GetString ("_Delete Task"));
+			delete.Clicked += OnGenTaskDelete;
+			menu.Add (delete);
+
+			var columns = new ContextMenuItem (GettextCatalog.GetString ("Columns"));
+			var columnsMenu = new ColumnSelectorMenu (view, restoreID);
+			columns.SubMenu = columnsMenu;
+			menu.Add (columns);
+
+			copy.Sensitive = jump.Sensitive = delete.Sensitive =
+				view.Selection != null &&
+				view.Selection.CountSelectedRows () > 0 &&
+				view.IsAColumnVisible ();
 			
-			var copy = new Gtk.Action ("copy", GettextCatalog.GetString ("_Copy"),
-				GettextCatalog.GetString ("Copy comment task"), Gtk.Stock.Copy);
-			copy.Activated += OnGenTaskCopied;
-			group.Add (copy, "<Control><Mod2>c");
-
-			var jump = new Gtk.Action ("jump", GettextCatalog.GetString ("_Go to"),
-				GettextCatalog.GetString ("Go to comment task"), Gtk.Stock.JumpTo);
-			jump.Activated += OnGenTaskJumpto;
-			group.Add (jump);
-
-			var delete = new Gtk.Action ("delete", GettextCatalog.GetString ("_Delete"),
-				GettextCatalog.GetString ("Delete comment task"), Gtk.Stock.Delete);
-			delete.Activated += OnGenTaskDelete;
-			group.Add (delete);
-
-			var columns = new Gtk.Action ("columns", GettextCatalog.GetString ("Columns"));
-			group.Add (columns, null);
-
-			var columnLine = new ToggleAction ("columnLine", GettextCatalog.GetString ("Line"),
-				GettextCatalog.GetString ("Toggle visibility of Line column"), null);
-			columnLine.Toggled += OnColumnVisibilityChanged;
-			columnsActions[columnLine] = (int)Columns.Line;
-			group.Add (columnLine);
-
-			var columnDescription = new ToggleAction ("columnDescription", GettextCatalog.GetString ("Description"),
-				GettextCatalog.GetString ("Toggle visibility of Description column"), null);
-			columnDescription.Toggled += OnColumnVisibilityChanged;
-			columnsActions[columnDescription] = (int)Columns.Description;
-			group.Add (columnDescription);
-
-			var columnFile = new ToggleAction ("columnFile", GettextCatalog.GetString ("File"),
-				GettextCatalog.GetString ("Toggle visibility of File column"), null);
-			columnFile.Toggled += OnColumnVisibilityChanged;
-			columnsActions[columnFile] = (int)Columns.File;
-			group.Add (columnFile);
-
-			var columnPath = new ToggleAction ("columnPath", GettextCatalog.GetString ("Path"),
-				GettextCatalog.GetString ("Toggle visibility of Path column"), null);
-			columnPath.Toggled += OnColumnVisibilityChanged;
-			columnsActions[columnPath] = (int)Columns.Path;
-			group.Add (columnPath);
-
-			UIManager uiManager = new UIManager ();
-			uiManager.InsertActionGroup (group, 0);
-			
-			string uiStr = "<ui><popup name='popup'>"
-				+ "<menuitem action='copy'/>"
-				+ "<menuitem action='jump'/>"
-				+ "<menuitem action='delete'/>"
-				+ "<separator/>"
-				+ "<menu action='columns'>"
-				+ "<menuitem action='columnLine' />"
-				+ "<menuitem action='columnDescription' />"
-				+ "<menuitem action='columnFile' />"
-				+ "<menuitem action='columnPath' />"
-				+ "</menu>"
-				+ "</popup></ui>";
-
-			uiManager.AddUiFromString (uiStr);
-			var menu = (Menu)uiManager.GetWidget ("/popup");
-			menu.ShowAll ();
-
-			menu.Shown += delegate (object o, EventArgs args)
-			{
-				columnLine.Active = view.Columns[(int)Columns.Line].Visible;
-				columnDescription.Active = view.Columns[(int)Columns.Description].Visible;
-				columnFile.Active = view.Columns[(int)Columns.File].Visible;
-				columnPath.Active = view.Columns[(int)Columns.Path].Visible;
-				copy.Sensitive = jump.Sensitive = delete.Sensitive =
-					view.Selection != null &&
-					view.Selection.CountSelectedRows () > 0 &&
-					(columnLine.Active ||
-					columnDescription.Active ||
-					columnFile.Active ||
-					columnPath.Active);
-			};
-			return menu;
+			menu.Show (view, evnt);
 		}
 
 		void OnGenTaskCopied (object o, EventArgs args)
@@ -567,16 +424,6 @@ namespace MonoDevelop.Ide.Tasks
 						}); 
 					}
 				}
-			}
-		}
-
-		void OnColumnVisibilityChanged (object o, EventArgs args)
-		{
-			ToggleAction action = o as ToggleAction;
-			if (action != null)
-			{
-				view.Columns[columnsActions[action]].Visible = action.Active;
-				StoreColumnsVisibility ();
 			}
 		}
 

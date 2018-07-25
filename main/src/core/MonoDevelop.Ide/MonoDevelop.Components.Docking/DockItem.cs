@@ -32,6 +32,8 @@ using System;
 using System.Xml;
 using Mono.Unix;
 
+using MonoDevelop.Components.AtkCocoaHelper;
+
 namespace MonoDevelop.Components.Docking
 {
 	public class DockItem
@@ -87,7 +89,8 @@ namespace MonoDevelop.Components.Docking
 			get { return stickyVisible; }
 			set { stickyVisible = value; }
 		}
-		
+
+		internal event EventHandler LabelChanged;
 		public string Label {
 			get { return label ?? string.Empty; }
 			set {
@@ -97,6 +100,13 @@ namespace MonoDevelop.Components.Docking
 				frame.UpdateTitle (this);
 				if (floatingWindow != null)
 					floatingWindow.Title = GetWindowTitle ();
+
+				toolbarTop?.UpdateAccessibilityLabel ();
+				toolbarLeft?.UpdateAccessibilityLabel ();
+				toolbarRight?.UpdateAccessibilityLabel ();
+				toolbarBottom?.UpdateAccessibilityLabel ();
+
+				LabelChanged?.Invoke (this, EventArgs.Empty);
 			}
 		}
 
@@ -123,6 +133,10 @@ namespace MonoDevelop.Components.Docking
 					titleTab.VisualStyle = currentVisualStyle;
 					titleTab.SetLabel (Widget, icon, label);
 					titleTab.ShowAll ();
+
+					if (widget != null) {
+						titleTab.Accessible.AddLinkedUIElement (widget.Accessible);
+					}
 				}
 				return titleTab;
 			}
@@ -144,6 +158,10 @@ namespace MonoDevelop.Components.Docking
 					widget.VisualStyle = currentVisualStyle;
 					widget.Visible = false; // Required to ensure that the Shown event is fired
 					widget.Shown += SetupContent;
+
+					if (titleTab != null) {
+						titleTab.Accessible.AddLinkedUIElement (titleTab.Accessible);
+					}
 				}
 				return widget;
 			}
@@ -215,20 +233,20 @@ namespace MonoDevelop.Components.Docking
 		{
 			switch (position) {
 				case DockPositionType.Top:
-				if (toolbarTop == null)
-					toolbarTop = new DockItemToolbar (this, DockPositionType.Top);
+					if (toolbarTop == null)
+						toolbarTop = new DockItemToolbar (this, DockPositionType.Top);
 					return toolbarTop;
 				case DockPositionType.Bottom:
 					if (toolbarBottom == null)
-					                     toolbarBottom = new DockItemToolbar (this, DockPositionType.Bottom);
+						toolbarBottom = new DockItemToolbar (this, DockPositionType.Bottom);
 					return toolbarBottom;
 				case DockPositionType.Left:
 					if (toolbarLeft == null)
-					                     toolbarLeft = new DockItemToolbar (this, DockPositionType.Left);
+						toolbarLeft = new DockItemToolbar (this, DockPositionType.Left);
 					return toolbarLeft;
 				case DockPositionType.Right:
 					if (toolbarRight == null)
-					                     toolbarRight = new DockItemToolbar (this, DockPositionType.Right);
+						toolbarRight = new DockItemToolbar (this, DockPositionType.Right);
 					return toolbarRight;
 				default: throw new ArgumentException ();
 			}

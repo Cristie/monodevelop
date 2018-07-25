@@ -81,6 +81,14 @@ namespace MonoDevelop.Components.AtkCocoaHelper
 			}
 		}
 
+		public static void SetCurrentFocus (AccessibilityElementProxy focusElement)
+		{
+			var element = focusElement != null ? focusElement.Proxy as NSObject : null;
+			NSApplication.SharedApplication.AccessibilityApplicationFocusedUIElement = element;
+			NSAccessibility.PostNotification (NSApplication.SharedApplication, NSAccessibilityNotifications.UIElementFocusedChangedNotification, 
+			                                  new NSDictionary (NSAccessibilityNotificationUserInfoKeys.UIElementsKey, NSArray.FromObject (element)));
+		}
+
 		public static void SetLabel (this Atk.Object o, string label)
 		{
 			var nsa = GetNSAccessibilityElement (o);
@@ -466,6 +474,33 @@ namespace MonoDevelop.Components.AtkCocoaHelper
 			nsa.AccessibilityChildren = newChildren;
 		}
 
+		public static void TransferAccessibleChild (this Atk.Object from, Atk.Object to, Atk.Object child)
+		{
+			var fromNsa = GetNSAccessibilityElement (from);
+			var toNsa = GetNSAccessibilityElement (to);
+			var childNsa = GetNSAccessibilityElement (child);
+
+			if (fromNsa == null || toNsa == null || childNsa == null) {
+				return;
+			}
+
+			var fromChildren = fromNsa.AccessibilityChildren;
+
+			if (fromChildren == null || fromChildren.Length == 0) {
+				return;
+			}
+
+			var fromList = fromChildren.ToList ();
+			fromList.Remove ((NSObject) childNsa);
+			fromNsa.AccessibilityChildren = fromList.ToArray ();
+
+			var toChildren = toNsa.AccessibilityChildren;
+			List<NSObject> toList = toChildren == null ? new List<NSObject> () : toChildren.ToList ();
+
+			toList.Add ((NSObject)childNsa);
+			toNsa.AccessibilityChildren = toList.ToArray ();
+		}
+
 		public static void SetAccessibleChildren (this Atk.Object o, AccessibilityElementProxy [] children)
 		{
 			var nsa = GetNSAccessibilityElement (o);
@@ -540,6 +575,12 @@ namespace MonoDevelop.Components.AtkCocoaHelper
 
 	public class AccessibilityElementProxy : IAccessibilityElementProxy
 	{
+		public static bool Enabled {
+			get {
+				return IdeTheme.AccessibilityEnabled;
+			}
+		}
+
 		RealAccessibilityElementProxy realProxyElement;
 		internal object Proxy {
 			get {
@@ -656,6 +697,17 @@ namespace MonoDevelop.Components.AtkCocoaHelper
 			var realChild = proxy.realProxyElement;
 
 			realProxyElement.AccessibilityAddChildElement (realChild);
+		}
+
+		public void RemoveAccessibleChild (IAccessibilityElementProxy child)
+		{
+			var proxy = (AccessibilityElementProxy)child;
+			var realChild = proxy.realProxyElement;
+
+			var children = realProxyElement.AccessibilityChildren.ToList ();
+			children.Remove (realChild);
+
+			realProxyElement.AccessibilityChildren = children.ToArray ();
 		}
 
 		public void SetRole (string role, string description = null)
@@ -1059,7 +1111,7 @@ namespace MonoDevelop.Components.AtkCocoaHelper
 			}
 		}
 
-		protected Gtk.Widget parent;
+		protected WeakReference<Gtk.Widget> parentRef = new WeakReference<Gtk.Widget> (null);
 		Rectangle realFrame;
 
 		void UpdateActions ()
@@ -1083,10 +1135,11 @@ namespace MonoDevelop.Components.AtkCocoaHelper
 		// It is used to convert the frame
 		public Gtk.Widget GtkParent {
 			get {
+				parentRef.TryGetTarget (out var parent);
 				return parent;
 			}
 			set {
-				parent = value;
+				parentRef.SetTarget (value);
 			}
 		}
 
@@ -1225,6 +1278,11 @@ namespace MonoDevelop.Components.AtkCocoaHelper
 		[Export ("accessibilityHitTest:")]
 		public virtual NSObject GetAccessibilityHitTest (CGPoint pointOnScreen)
 		{
+			parentRef.TryGetTarget (out var parent);
+			if (parent == null) {
+				return null;
+			}
+
 			var gdkWindow = parent.GdkWindow;
 
 			if (gdkWindow == null) {
@@ -1341,9 +1399,17 @@ namespace MonoDevelop.Components.AtkCocoaHelper
 
 		public override bool AccessibilityFocused {
 			get {
+				parentRef.TryGetTarget (out var parent);
+				if (parent == null) {
+					return false;
+				}
 				return parent.HasFocus;
 			}
 			set {
+				parentRef.TryGetTarget (out var parent);
+				if (parent == null) {
+					return;
+				}
 				parent.HasFocus = value;
 			}
 		}
@@ -1470,6 +1536,11 @@ namespace MonoDevelop.Components.AtkCocoaHelper
 		[Export ("accessibilityFrameForRange:")]
 		CGRect AccessibilityFrameForRange (NSRange range)
 		{
+			parentRef.TryGetTarget (out var parent);
+			if (parent == null) {
+				return CGRect.Empty;
+			}
+
 			var realRange = new AtkCocoa.Range { Location = (int)range.Location, Length = (int)range.Length };
 			var frame = GetFrameForRange (realRange);
 

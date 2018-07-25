@@ -26,6 +26,8 @@
 //
 
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using NUnit.Framework;
 using UnitTests;
@@ -584,7 +586,7 @@ namespace MonoDevelop.Projects
 			string solFile = Util.GetSampleProject ("console-project", "ConsoleProject.sln");
 			Solution sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
 			var p = (DotNetProject) sol.Items [0];
-			Assert.AreEqual (MSBuildSupport.Supported, p.MSBuildEngineSupport);
+			Assert.IsTrue (p.MSBuildProject.UseMSBuildEngine);
 			sol.Dispose ();
 		}
 
@@ -592,11 +594,7 @@ namespace MonoDevelop.Projects
 		public void DefaultMSBuildSupportForNewProject ()
 		{
 			var project = Services.ProjectService.CreateDotNetProject ("C#");
-			bool byDefault, require;
-			MSBuildProjectService.CheckHandlerUsesMSBuildEngine (project, out byDefault, out require);
-			Assert.IsTrue (byDefault);
-			Assert.IsFalse (require);
-
+			Assert.IsTrue (project.MSBuildProject.UseMSBuildEngine);
 			project.Dispose ();
 		}
 
@@ -798,6 +796,142 @@ namespace MonoDevelop.Projects
 			string defaultNamespace = project.GetDefaultNamespace (null);
 
 			Assert.AreEqual ("abctest", defaultNamespace);
+		}
+
+		[TestCase ("ProjectName", null, "ProjectName")]
+		[TestCase ("ProjectName", "", "ProjectName")]
+		[TestCase ("ProjectName", "MyProject", "MyProject")]
+		[TestCase ("1", "", "Application")]
+		[TestCase ("ProjectName", "1", "Application")]
+		public void GetDefaultNamespace_NullFileName (
+			string projectName,
+			string projectDefaultNamespace,
+			string expectedDefaultNamespace)
+		{
+			var project = Services.ProjectService.CreateDotNetProject ("C#");
+			project.Name = projectName;
+			project.DefaultNamespace = projectDefaultNamespace;
+
+			string result = project.GetDefaultNamespace (null);
+
+			Assert.AreEqual (expectedDefaultNamespace, result);
+		}
+
+		/// <summary>
+		/// Ensures the type system is notified when the project configuration is copied.
+		/// </summary>
+		[Test]
+		public async Task CloneAndUpdateProjectConfigurations ()
+		{
+			string solFile = Util.GetSampleProject ("console-project", "ConsoleProject.sln");
+			using (var sol = (Solution)await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile)) {
+				var p = (DotNetProject)sol.Items [0];
+				var debugConfig = p.Configurations ["Debug"];
+				string modifiedHint = null;
+				p.Modified += (sender, e) => {
+					modifiedHint = e.First ().Hint;
+				};
+				var cloneDebugConfig = ConfigurationTargetExtensions.CloneConfiguration (p, debugConfig, debugConfig.Id);
+				Assert.IsNull (modifiedHint);
+
+				debugConfig.CopyFrom (cloneDebugConfig);
+				Assert.AreEqual ("CompilerParameters", modifiedHint);
+			}
+		}
+
+		/// <summary>
+		/// Tests that the MSBuildRuntimeVersion property is defined when evaluating the project.
+		/// Xamarin.Android targets use this to determine whether xbuild is being used.
+		/// </summary>
+		[Test]
+		public async Task MSBuildRuntimeVersionProperty ()
+		{
+			string projFile = Util.GetSampleProject ("msbuild-tests", "msbuildruntimeversion.csproj");
+			using (var p = (Project)await Services.ProjectService.ReadSolutionItem (Util.GetMonitor (), projFile)) {
+				bool isXBuild = p.MSBuildProject.EvaluatedProperties.GetValue<bool> ("IsXBuild");
+				string msbuildRuntimeVersion = p.MSBuildProject.EvaluatedProperties.GetValue ("MSBuildRuntimeVersion");
+				Assert.IsFalse (isXBuild);
+			}
+		}
+
+		[Test]
+		public async Task XamarinIOSProjectReferencesCollectionsImmutableNetStandardAssembly_GetReferencedAssembliesShouldIncludeNetStandard ()
+		{
+			if (!Platform.IsMac) {
+				// NUnit platform attribute does not seem to work.
+				Assert.Ignore ("Only supported on Mac.");
+			}
+
+			FilePath solFile = Util.GetSampleProject ("iOSImmutableCollections", "iOSImmutableCollections.sln");
+			CreateNuGetConfigFile (solFile.ParentDirectory);
+
+			var process = Process.Start ("msbuild", $"/t:Restore /p:RestoreDisableParallel=true \"{solFile}\"");
+			Assert.IsTrue (process.WaitForExit (120000), "Timeout restoring NuGet packages.");
+			Assert.AreEqual (0, process.ExitCode);
+
+			using (var sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile)) {
+				var p = (DotNetProject) sol.Items [0];
+
+				var refs = (await p.GetReferencedAssemblies (ConfigurationSelector.Default)).ToArray ();
+
+				Assert.IsTrue (refs.Any (r => r.FilePath.FileName == "netstandard.dll"));
+			}
+		}
+
+		/// <summary>
+		/// Clear all other package sources and just use the main NuGet package source when
+		/// restoring the packages for the project tests.
+		/// </summary>
+		static void CreateNuGetConfigFile (FilePath directory)
+		{
+			var fileName = directory.Combine ("NuGet.Config");
+
+			string xml =
+				"<configuration>\r\n" +
+				"  <packageSources>\r\n" +
+				"    <clear />\r\n" +
+				"    <add key=\"NuGet v3 Official\" value=\"https://api.nuget.org/v3/index.json\" />\r\n" +
+				"  </packageSources>\r\n" +
+				"</configuration>";
+
+			File.WriteAllText (fileName, xml);
+		}
+
+		[Test]
+		public async Task ProjectExtensionOnModifiedCalledWhenProjectModified ()
+		{
+			var fn = new CustomItemNode<TestModifiedProjectExtension> ();
+			WorkspaceObject.RegisterCustomExtension (fn);
+
+			try {
+				string solFile = Util.GetSampleProject ("console-project", "ConsoleProject.sln");
+				Solution sol = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solFile);
+
+				var p = (DotNetProject) sol.Items [0];
+
+				TestModifiedProjectExtension.ModifiedEventArgs.Clear ();
+
+				p.NotifyModified ("Files");
+
+				var args = TestModifiedProjectExtension.ModifiedEventArgs.Single ();
+				var eventInfo = args.Single ();
+				Assert.AreEqual ("Files", eventInfo.Hint);
+				Assert.AreEqual (p, eventInfo.SolutionItem);
+				Assert.AreEqual (sol, eventInfo.Solution);
+			} finally {
+				WorkspaceObject.UnregisterCustomExtension (fn);
+			}
+		}
+
+		class TestModifiedProjectExtension : DotNetProjectExtension
+		{
+			public static List<SolutionItemModifiedEventArgs> ModifiedEventArgs = new List<SolutionItemModifiedEventArgs> ();
+
+			protected internal override void OnModified (SolutionItemModifiedEventArgs args)
+			{
+				base.OnModified (args);
+				ModifiedEventArgs.Add (args);
+			}
 		}
 	}
 }

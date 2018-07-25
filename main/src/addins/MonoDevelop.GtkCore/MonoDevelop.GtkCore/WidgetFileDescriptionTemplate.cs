@@ -28,16 +28,15 @@
 
 
 using System;
-using System.Xml;
 using System.IO;
+using System.Threading.Tasks;
+using System.Xml;
 
 using MonoDevelop.Core;
-using MonoDevelop.Projects;
-using MonoDevelop.Ide.Templates;
 using MonoDevelop.GtkCore.GuiBuilder;
 using MonoDevelop.Ide;
-using MonoDevelop.Ide.TypeSystem;
-
+using MonoDevelop.Ide.Templates;
+using MonoDevelop.Projects;
 
 namespace MonoDevelop.GtkCore
 {
@@ -77,7 +76,7 @@ namespace MonoDevelop.GtkCore
 			return (project is DotNetProject) && GtkDesignInfo.SupportsRefactoring (project as DotNetProject);
 		}
 		
-		public override bool AddToProject (SolutionFolderItem policyParent, Project project, string language, string directory, string name)
+		public override async Task<bool> AddToProjectAsync (SolutionFolderItem policyParent, Project project, string language, string directory, string name)
 		{
 			if (!GtkDesignInfo.SupportsDesigner (project)) {
 				ReferenceManager mgr = new ReferenceManager (project as DotNetProject);
@@ -90,9 +89,7 @@ namespace MonoDevelop.GtkCore
 			GuiBuilderProject gproject = info.GuiBuilderProject;
 			
 			string fileName = fileTemplate.GetFileName (policyParent, project, language, directory, name);
-			fileTemplate.AddToProject (policyParent, project, language, directory, name);
-
-			FileService.NotifyFileChanged (fileName);
+			await fileTemplate.AddToProjectAsync (policyParent, project, language, directory, name);
 
 			DotNetProject netProject = project as DotNetProject;
 			string ns = netProject != null ? netProject.GetDefaultNamespace (fileName) : "";
@@ -114,7 +111,7 @@ namespace MonoDevelop.GtkCore
 				
 				gproject.AddNewComponent (doc.DocumentElement);
 				gproject.SaveAll (false);
-				IdeApp.ProjectOperations.SaveAsync (project);
+				IdeApp.ProjectOperations.SaveAsync (project).Ignore ();
 				return true;
 			}
 			
@@ -128,7 +125,7 @@ namespace MonoDevelop.GtkCore
 				
 				gproject.SteticProject.AddNewActionGroup (doc.DocumentElement);
 				gproject.SaveAll (false);
-				IdeApp.ProjectOperations.SaveAsync (project);
+				IdeApp.ProjectOperations.SaveAsync (project).Ignore ();
 				return true;
 			}
 			

@@ -1,4 +1,4 @@
-﻿//
+//
 // CSharpFindReferencesProviderTests.cs
 //
 // Author:
@@ -31,6 +31,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using ICSharpCode.NRefactory6;
 using Microsoft.CodeAnalysis;
 using MonoDevelop.Core;
 using MonoDevelop.CSharp.Formatting;
@@ -43,53 +44,49 @@ using MonoDevelop.Ide.TypeSystem;
 using MonoDevelop.Projects;
 using MonoDevelop.Projects.Policies;
 using NUnit.Framework;
+using System.Collections.Concurrent;
+using MonoDevelop.Ide;
 
 namespace MonoDevelop.CSharp.Refactoring
 {
 	[TestFixture]
-	class CSharpFindReferencesProviderTests : global::UnitTests.TestBase
+	class CSharpFindReferencesProviderTests : TextEditorExtensionTestBase
 	{
+		protected override EditorExtensionTestData GetContentData () => EditorExtensionTestData.CSharp;
 
-		static async Task<List<SearchResult>> GatherReferences (string input, Func<MonoDevelop.Projects.Project, Task<IEnumerable<SearchResult>>> findRefsCallback)
+		async Task<List<SearchResult>> GatherReferences (string input, Func<MonoDevelop.Projects.Project, Task<IEnumerable<SearchResult>>> findRefsCallback)
 		{
-			TestWorkbenchWindow tww = new TestWorkbenchWindow ();
-			TestViewContent content = new TestViewContent ();
-			tww.ViewContent = content;
-			content.ContentName = "/a.cs";
-			content.Data.MimeType = "text/x-csharp";
+			using (var testCase = await SetupTestCase (input)) {
+				var doc = testCase.Document;
 
-			var doc = new MonoDevelop.Ide.Gui.Document (tww);
+				await doc.UpdateParseDocument ();
+				return (await findRefsCallback (testCase.Project)).ToList ();
+			}
+		}
 
-			var text = input;
-			content.Text = text;
+		class MockSearchProgressMonitor : SearchProgressMonitor
+		{
+			internal ConcurrentBag<SearchResult> Results = new ConcurrentBag<SearchResult> ();
+			protected override void OnReportResults (IEnumerable<SearchResult> results)
+			{
+				foreach (var result in results)
+					ReportResult (result);
+			}
 
-			var project = Services.ProjectService.CreateProject ("C#");
-			project.Name = "test";
-			project.FileName = "test.csproj";
-			project.Files.Add (new ProjectFile (content.ContentName, BuildAction.Compile));
-			project.Policies.Set (PolicyService.InvariantPolicies.Get<CSharpFormattingPolicy> (), CSharpFormatter.MimeType);
-			var solution = new MonoDevelop.Projects.Solution ();
-			solution.AddConfiguration ("", true);
-			solution.DefaultSolutionFolder.AddItem (project);
-			using (var monitor = new ProgressMonitor ())
-				await TypeSystemService.Load (solution, monitor);
-			content.Project = project;
-			doc.SetProject (project);
-
-			await doc.UpdateParseDocument ();
-			try {
-				return (await findRefsCallback (project)).ToList ();
-			} finally {
-				TypeSystemService.Unload (solution);
+			protected override void OnReportResult (SearchResult result)
+			{
+				Results.Add (result);
 			}
 		}
 
 		[Test]
 		public async Task TestFindReferences ()
 		{
-			var refs = await GatherReferences (@"class FooBar {}", project => {
+			var refs = await GatherReferences (@"class FooBar {}", async project => {
 				var provider = new CSharpFindReferencesProvider ();
-				return provider.FindReferences ("T:FooBar", project, default (CancellationToken));
+				var monitor = new MockSearchProgressMonitor ();
+				await provider.FindReferences ("T:FooBar", project, monitor);
+				return monitor.Results;
 			});
 			Assert.AreEqual (1, refs.Count);
 		}
@@ -102,9 +99,11 @@ public void Foo() {}
 public void Foo(int i) {}
 public void Foo(string s) {}
 public void Foo(int i, int j) {}
- }", project => {
+ }", async project => {
 				var provider = new CSharpFindReferencesProvider ();
-				return provider.FindAllReferences ("M:FooBar.Foo", project, default (CancellationToken));
+				var monitor = new MockSearchProgressMonitor ();
+				await provider.FindAllReferences ("M:FooBar.Foo", project, monitor);
+				return monitor.Results;
 			});
 			Assert.AreEqual (4, refs.Count);
 		}
@@ -115,12 +114,76 @@ public void Foo(int i, int j) {}
 		[Test]
 		public async Task TestBug58060 ()
 		{
-			var refs = await GatherReferences (@"class FooBar { FooBar fb; }", project => {
+			var refs = await GatherReferences (@"class FooBar { FooBar fb; }", async project => {
 				var provider = new CSharpFindReferencesProvider ();
-				return  provider.FindAllReferences ("T:FooBar", project, default (CancellationToken));
+				var monitor = new MockSearchProgressMonitor ();
+				await provider.FindAllReferences ("T:FooBar", project, monitor);
+				return monitor.Results;
 			});
 			Assert.AreEqual (2, refs.Count);
 		}
 
+		/// <summary>
+		/// Bug 591385: [Feedback] Visual Studio Mac Community, find reference stops working in some classes.
+		/// </summary>
+		[Test]
+		public async Task TestBug591385 ()
+		{
+			var refs = await GatherReferences (@"
+public class RefBug {
+    public int xxx;
+    public void Meth() { xxx++; }
+}
+
+public class RefBug2
+{
+    public int xxx;
+    public void Meth() { xxx++; }
+}
+
+", async project => {
+				var provider = new CSharpFindReferencesProvider ();
+				var monitor = new MockSearchProgressMonitor ();
+				await provider.FindAllReferences ("F:RefBug2.xxx", project, monitor);
+				return monitor.Results;
+			});
+			Assert.AreEqual (2, refs.Count);
+		}
+
+		/// <summary>
+		/// Right-click -> FindReferences when used in an interface, returns too many useless results #4709
+		/// </summary>
+		[Test]
+		public async Task TestIssue4709 ()
+		{
+			string testCode = @"
+public interface ITest {
+}
+
+public class Test : ITest
+{
+	public static void Main (string[] args)
+	{
+		Test test;
+	}
+}
+
+";
+			var refs = await GatherReferences (testCode, async project => {
+				var provider = new CSharpFindReferencesProvider ();
+				var monitor = new MockSearchProgressMonitor ();
+				await provider.FindReferences ("T:ITest", project, monitor);
+				return monitor.Results;
+			});
+			Assert.AreEqual (2, refs.Count);
+
+			refs = await GatherReferences (testCode, async project => {
+				var provider = new CSharpFindReferencesProvider ();
+				var monitor = new MockSearchProgressMonitor ();
+				await provider.FindAllReferences ("T:ITest", project, monitor);
+				return monitor.Results;
+			});
+			Assert.AreEqual (4, refs.Count);
+		}
 	}
 }

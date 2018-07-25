@@ -40,21 +40,27 @@ namespace Mono.TextEditor.Tests
 		internal class TestIndentTracker : IndentationTracker
 		{
 			string indentString;
+			Dictionary<int, string> definedIndents = new Dictionary<int, string> ();
 
-			public override IndentationTrackerFeatures SupportedFeatures {
-				get {
-					return IndentationTrackerFeatures.All;
-				}
-			}
+			IndentationTrackerFeatures features;
+			public override IndentationTrackerFeatures SupportedFeatures => features;
 
-			public TestIndentTracker (string indentString = "\t\t")
+			public TestIndentTracker (string indentString = "\t\t", IndentationTrackerFeatures features = IndentationTrackerFeatures.All)
 			{
 				this.indentString = indentString;
+				this.features = features;
 			}
 
 			public override string GetIndentationString (int lineNumber)
 			{
+				if (definedIndents.TryGetValue (lineNumber, out string result))
+					return result;
 				return indentString;
+			}
+
+			public void SetIndent (int lineNumber, string indentationString)
+			{
+				definedIndents [lineNumber] = indentationString;
 			}
 		}
 

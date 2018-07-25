@@ -60,12 +60,14 @@ namespace MonoDevelop.Projects
 			return next.SupportsFlavor (guid);
 		}
 
+		[Obsolete ("This property is ignored, msbuild is now always used")]
 		internal bool IsMicrosoftBuildRequired {
 			get {
 				return RequiresMicrosoftBuild || (next != null && next.IsMicrosoftBuildRequired);
 			}
 		}
 
+		[Obsolete ("This property is ignored, msbuild is now always used")]
 		protected bool RequiresMicrosoftBuild {
 			get; set;
 		}
@@ -205,16 +207,23 @@ namespace MonoDevelop.Projects
 			return next.OnGetCommonBuildActions ();
 		}
 
+		internal protected virtual bool OnGetFileSupportsBuildAction (string fileName, string buildAction)
+		{
+			return next.OnGetFileSupportsBuildAction (fileName, buildAction);
+		}
+
 		internal protected virtual ProjectItem OnCreateProjectItem (IMSBuildItemEvaluated item)
 		{
 			return next.OnCreateProjectItem (item);
 		}
 
+		[Obsolete ("Use MSBuild")]
 		internal protected virtual void OnPopulateSupportFileList (FileCopySet list, ConfigurationSelector configuration)
 		{
 			next.OnPopulateSupportFileList (list, configuration);
 		}
 
+		[Obsolete ("Use MSBuild")]
 		internal protected virtual void OnPopulateOutputFileList (List<FilePath> list, ConfigurationSelector configuration)
 		{
 			next.OnPopulateOutputFileList (list, configuration);

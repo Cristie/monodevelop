@@ -46,6 +46,8 @@ namespace MonoDevelop.Ide.Editor
 
 	interface ITextEditorImpl : IDisposable
 	{
+		Microsoft.VisualStudio.Text.Editor.ITextView TextView { get; set; }
+
 		ViewContent ViewContent { get; }
 
 		string ContentName { get; set; }
@@ -98,7 +100,7 @@ namespace MonoDevelop.Ide.Editor
 
 		void FixVirtualIndentation ();
 
-		IEditorActionHost Actions { get; }
+		IMonoDevelopEditorOperations Actions { get; }
 
 		ITextMarkerFactory TextMarkerFactory { get; }
 
@@ -222,11 +224,13 @@ namespace MonoDevelop.Ide.Editor
 
 		void GrabFocus ();
 		bool HasFocus { get; }
+		bool LockFixIndentation { get; set; }
 
-		event EventHandler<LineEventArgs> LineShown;
+		event EventHandler<LineEventArgs> LineShowing;
 		event EventHandler FocusLost;
 
 		void ShowTooltipWindow (Components.Window window, TooltipWindowOptions options);
+		void HideTooltipWindow ();
 		Task<ScopeStack> GetScopeStackAsync (int offset, CancellationToken cancellationToken);
 
 		double GetLineHeight (int line);

@@ -57,26 +57,27 @@ namespace MonoDevelop.Core.Logging
 			
 			switch (level) {
 			case LogLevel.Fatal:
-				header = GettextCatalog.GetString ("FATAL ERROR");
+				header = "FATAL ERROR";
 				break;
 			case LogLevel.Error:
-				header = GettextCatalog.GetString ("ERROR");
+				header = "ERROR";
 				break;
 			case LogLevel.Warn:
-				header = GettextCatalog.GetString ("WARNING");
+				header = "WARNING";
 				break;
 			case LogLevel.Info:
-				header = GettextCatalog.GetString ("INFO");
+				header = "INFO";
 				break;
 			case LogLevel.Debug:
-				header = GettextCatalog.GetString ("DEBUG");
+				header = "DEBUG";
 				break;
 			default:
-				header = GettextCatalog.GetString ("LOG");
+				header = "LOG";
 				break;
 			}
-			
-			writer.WriteLine ("{0}[{1}]: {2}", header, DateTime.Now.ToString ("u"), message);
+
+			// Can be null if invoked from a finalizer of another object after this one has been disposed/finalized
+			writer?.WriteLine ("{0}[{1}]: {2}", header, DateTime.Now.ToString ("u"), message);
 		}
 		
 		public EnabledLoggingLevel EnabledLevel {
@@ -99,8 +100,8 @@ namespace MonoDevelop.Core.Logging
 		{
 			if (disposing && writer != null) {
 				writer.Dispose ();
-				writer = null;
 			}
+			writer = null;
 		}
 		
 		~FileLogger ()

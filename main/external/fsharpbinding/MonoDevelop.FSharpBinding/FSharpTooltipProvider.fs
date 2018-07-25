@@ -47,21 +47,21 @@ type FSharpTooltipProvider() =
             let doc = IdeApp.Workbench.ActiveDocument
             if doc = null then noTooltip else
 
-            let file = doc.FileName.FullPath.ToString()
+            let file = doc.FileName.FullPath
 
-            if not (FileService.supportedFileName file) then noTooltip else
+            if not (FileService.supportedFilePath file) then noTooltip else
 
             let source = editor.Text
             if source = null || offset >= source.Length || offset < 0 then noTooltip else
 
             let line, col, lineStr = editor.GetLineInfoFromOffset offset
 
-            if Tokens.isInvalidTipTokenAtPoint editor context offset then noTooltip else
+            if Tokens.isInvalidTipTokenAtPoint editor offset then noTooltip else
 
             let tooltipComputation =
                 asyncChoice {
                     try
-                        LoggingService.LogDebug "TooltipProvider: Getting tool tip"
+                        LoggingService.logDebug "TooltipProvider: Getting tool tip"
 
                         let parseAndCheckResults = context.TryGetAst()
                         match parseAndCheckResults with
@@ -91,14 +91,16 @@ type FSharpTooltipProvider() =
                 Task.FromResult keywordTip
             | None ->
 
-            Async.StartAsTask(
-                async {
+            async {
 
                     let! tooltipResult = tooltipComputation
                     match tooltipResult with
                     | Success(tip) -> return tip
                     | Operators.Error(warning) -> LoggingService.LogWarning warning
-                                                  return Unchecked.defaultof<_> }, cancellationToken = cancellationToken)
+                                                  return Unchecked.defaultof<_> 
+            }
+            |> StartAsyncAsTask cancellationToken
+                                                  
 
         with exn ->
             LoggingService.LogError ("TooltipProvider: Error retrieving tooltip", exn)

@@ -8,6 +8,7 @@ using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
 using Microsoft.CodeAnalysis.CSharp;
+using MonoDevelop.CSharp.Navigation;
 
 namespace ICSharpCode.NRefactory6.CSharp.Features.GotoDefinition
 {
@@ -58,6 +59,8 @@ namespace ICSharpCode.NRefactory6.CSharp.Features.GotoDefinition
 
 		public static async Task<ISymbol> FindSymbolAsync (Document document, int position, CancellationToken cancellationToken)
 		{
+			if (document == null)
+				return null;
 			var workspace = document.Project.Solution.Workspace;
 
 			var semanticModel = await document.GetSemanticModelAsync (cancellationToken).ConfigureAwait (false);
@@ -77,6 +80,16 @@ namespace ICSharpCode.NRefactory6.CSharp.Features.GotoDefinition
 		//		}
 
 		public static bool TryGoToDefinition (Document document, int position, CancellationToken cancellationToken)
+		{
+			var metadata = Counters.CreateNavigateToMetadata ("Declaration");
+			using (var timer = Counters.NavigateTo.BeginTiming (metadata, cancellationToken)) {
+				bool result = TryGoToDefinitionInternal (document, position, cancellationToken);
+				metadata.SetResult (result);
+				return result;
+			}
+		}
+
+		static bool TryGoToDefinitionInternal (Document document, int position, CancellationToken cancellationToken)
 		{
 			var symbol = FindSymbolAsync (document, position, cancellationToken).Result;
 

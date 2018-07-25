@@ -17,19 +17,21 @@ namespace Microsoft.VisualStudio.Text.Editor.Implementation
 {
     internal class TextSelection : ITextSelection
     {
-        private TextEditor _textEditor;
+		private Mono.TextEditor.MonoTextEditor _textEditor;
         private ITextView _textView;
+		private List<VirtualSnapshotSpan> _virtualSelectedSpans;
 
-        public TextSelection(TextEditor textEditor, ITextView textView)
+		public TextSelection(Mono.TextEditor.MonoTextEditor textArea)
         {
-            _textEditor = textEditor;
-            _textView = textView;
+            _textEditor = textArea;
+            _textView = textArea;
 
             _textEditor.SelectionChanged += OnSelectionChanged;
         }
 
         void OnSelectionChanged(object s, EventArgs args)
         {
+			_virtualSelectedSpans = null;
             // TODO: push both ways?
             SelectionChanged?.Invoke(this, new EventArgs());
         }
@@ -51,7 +53,7 @@ namespace Microsoft.VisualStudio.Text.Editor.Implementation
         {
             get
             {
-                int offset = _textEditor.SelectionLeadOffset;
+                int offset = _textEditor.SelectionLead;
                 if (offset == -1)
                     offset = _textEditor.SelectionRange.Offset;  // Selection is empty
 
@@ -66,7 +68,7 @@ namespace Microsoft.VisualStudio.Text.Editor.Implementation
         {
             get
             {
-                int offset = _textEditor.SelectionAnchorOffset;
+                int offset = _textEditor.SelectionAnchor;
                 if (offset == -1)
                     offset = _textEditor.SelectionRange.Offset;  // Selection is empty
 
@@ -147,7 +149,7 @@ namespace Microsoft.VisualStudio.Text.Editor.Implementation
                 else
                 {
                     IList<SnapshotSpan> spans = new List<SnapshotSpan>();
-                    foreach (MonoDevelop.Ide.Editor.Selection curSelection in _textEditor.Selections)
+                    foreach (MonoDevelop.Ide.Editor.Selection curSelection in new MonoDevelop.Ide.Editor.Selection[] { _textEditor.MainSelection })
                     {
                         for (int curLineIndex = curSelection.MinLine; curLineIndex <= curSelection.MaxLine; curLineIndex++)
                         {
@@ -190,11 +192,49 @@ namespace Microsoft.VisualStudio.Text.Editor.Implementation
             }
         }
 
-        public ReadOnlyCollection<VirtualSnapshotSpan> VirtualSelectedSpans
+		private void EnsureVirtualSelectedSpans ()
+		{
+			if (_virtualSelectedSpans == null) {
+				_virtualSelectedSpans = new List<VirtualSnapshotSpan> ();
+				if (this.IsEmpty) {
+					VirtualSnapshotPoint caretPoint = this.ActivePoint; //== this.AnchorPoint
+					_virtualSelectedSpans.Add (new VirtualSnapshotSpan (caretPoint, caretPoint));
+				} else {
+					if (this.Mode == TextSelectionMode.Box) {
+						SnapshotPoint current = this.Start.Position;
+						VirtualSnapshotPoint end = this.End;
+
+						do {
+							ITextViewLine line = _textView.GetTextViewLineContainingBufferPosition (current);
+
+							VirtualSnapshotSpan? span = this.GetSelectionOnTextViewLine (line);
+							if (span.HasValue)
+								_virtualSelectedSpans.Add (span.Value);
+
+							if (line.LineBreakLength == 0 && line.IsLastTextViewLineForSnapshotLine)
+								break;      //Just processed last text view line in buffer.
+
+							current = line.EndIncludingLineBreak;
+						}
+						while ((current.Position <= end.Position.Position) ||                               //Continue while the virtual space version of current
+							   (end.IsInVirtualSpace && (current.Position == end.Position.Position)));      //is less than the virtual space position of the end of selection.
+					} else {
+						_virtualSelectedSpans.Add (new VirtualSnapshotSpan (this.Start, this.End));
+					}
+				}
+			}
+		}
+
+		public ReadOnlyCollection<VirtualSnapshotSpan> VirtualSelectedSpans
         {
             get
             {
-                throw new NotImplementedException();
+                // Our code doesn't invalidate this in all places, so for now ensure we invalidate always
+                // to avoid hard to diagnose bugs.
+                // This isn't called often so is not a perf concern.
+				_virtualSelectedSpans = null;
+				EnsureVirtualSelectedSpans ();
+				return new ReadOnlyCollection<VirtualSnapshotSpan> (_virtualSelectedSpans);
             }
         }
 

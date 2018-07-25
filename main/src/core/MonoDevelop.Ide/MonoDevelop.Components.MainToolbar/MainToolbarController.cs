@@ -133,6 +133,7 @@ namespace MonoDevelop.Components.MainToolbar
 				new SearchMenuModel (GettextCatalog.GetString ("Search Files"), "file"),
 				new SearchMenuModel (GettextCatalog.GetString ("Search Types"), "type"),
 				new SearchMenuModel (GettextCatalog.GetString ("Search Members"), "member"),
+				new SearchMenuModel (GettextCatalog.GetString ("Search Commands"), "command"),
 			};
 
 			// Attach menu category handlers.
@@ -642,11 +643,20 @@ namespace MonoDevelop.Components.MainToolbar
 			if (popup == null)
 				return;
 
-			if (IdeApp.Workbench.RootWindow.Visible)
-				popup.ShowPopup (ToolbarView.PopupAnchor, PopupPosition.TopRight);
+			popup.IgnoreRepositionWindow = false;
 
-			if (ToolbarView.PopupAnchor.GdkWindow == null)
-				popup.Location = new Xwt.Point (ToolbarView.PopupAnchor.Allocation.Width - popup.Size.Width, ToolbarView.PopupAnchor.Allocation.Y);
+			var anchor = ToolbarView.PopupAnchor;
+			if (IdeApp.Workbench.RootWindow.Visible)
+				popup.ShowPopup (anchor, PopupPosition.TopRight);
+
+			if (anchor.GdkWindow == null) {
+				var location = new Xwt.Point (anchor.Allocation.Width - popup.Size.Width, anchor.Allocation.Y);
+
+				// Need to hard lock the location because Xwt doesn't know that the allocation might be coming from a
+				// Cocoa control and thus has been changed to take macOS monitor layout into consideration
+				popup.IgnoreRepositionWindow = true;
+				popup.Location = location;
+			}
 		}
 
 		void DestroyPopup ()
@@ -967,8 +977,8 @@ namespace MonoDevelop.Components.MainToolbar
 					throw new ArgumentNullException (nameof (target));
 				
 				ExecutionTarget = target;
-				image = target?.Image;
-				tooltip = target?.Tooltip;
+				image = target.Image;
+				tooltip = target.Tooltip;
 
 				this.fullText = fullText;
 				Project = project;
@@ -1091,7 +1101,7 @@ namespace MonoDevelop.Components.MainToolbar
 				int i = s.IndexOf ('_');
 				if (i == -1)
 					return s;
-				var sb = new StringBuilder (i);
+				var sb = StringBuilderCache.Allocate ();
 				sb.Append (s, 0, i);
 				for (; i < s.Length; i++) {
 					if (s [i] == '_') {
@@ -1101,7 +1111,7 @@ namespace MonoDevelop.Components.MainToolbar
 					}
 					sb.Append (s [i]);
 				}
-				return sb.ToString ();
+				return StringBuilderCache.ReturnAndFree (sb);
 			}
 		}
 

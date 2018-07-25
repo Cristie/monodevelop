@@ -87,7 +87,7 @@ namespace MonoDevelop.Refactoring.Rename
 			var cts = new CancellationTokenSource ();
 			var newSolution = await MessageService.ExecuteTaskAndShowWaitDialog (Task.Run (() => Renamer.RenameSymbolAsync (currentSolution, symbol, "_" + symbol.Name + "_", ws.Options, cts.Token)), GettextCatalog.GetString ("Looking for all references"), cts);
 			var projectChanges = currentSolution.GetChanges (newSolution).GetProjectChanges ().ToList ();
-			var changedDocuments = new HashSet<string> ();
+			var changedDocuments = new List<string> ();
 			foreach (var change in projectChanges) {
 				foreach (var changedDoc in change.GetChangedDocuments ()) {
 					changedDocuments.Add (ws.CurrentSolution.GetDocument (changedDoc).FilePath);
@@ -95,8 +95,10 @@ namespace MonoDevelop.Refactoring.Rename
 			}
 
 			if (changedDocuments.Count > 1) {
-				using (var dlg = new RenameItemDialog (symbol, this))
+				using (var dlg = new RenameItemDialog (symbol, this)) {
+					dlg.ChangedDocuments = changedDocuments;
 					MessageService.ShowCustomDialog (dlg);
+				}
 				return;
 			}
 
@@ -111,38 +113,7 @@ namespace MonoDevelop.Refactoring.Rename
 			var editor = doc.Editor;
 			var oldVersion = editor.Version;
 
-			var links = new List<TextLink> ();
-			var link = new TextLink ("name");
-
-			var documents = ImmutableHashSet.Create (doc.AnalysisDocument);
-
-			foreach (var loc in symbol.Locations) {
-				if (loc.IsInSource && FilePath.PathComparer.Equals (loc.SourceTree.FilePath, doc.FileName)) {
-					link.AddLink (new TextSegment (loc.SourceSpan.Start, loc.SourceSpan.Length));
-				}
-			}
-
-			foreach (var mref in await SymbolFinder.FindReferencesAsync (symbol, doc.AnalysisDocument.Project.Solution, documents, default (CancellationToken))) {
-				foreach (var loc in mref.Locations) {
-					TextSpan span = loc.Location.SourceSpan;
-					var root = loc.Location.SourceTree.GetRoot ();
-					var node = root.FindNode (loc.Location.SourceSpan);
-					var trivia = root.FindTrivia (loc.Location.SourceSpan.Start);
-					if (!trivia.IsKind (SyntaxKind.SingleLineDocumentationCommentTrivia)) {
-						span = node.Span;
-					}
-					if (span.Start != loc.Location.SourceSpan.Start) {
-						span = loc.Location.SourceSpan;
-					}
-					var segment = new TextSegment (span.Start, span.Length);
-					if (segment.Offset <= editor.CaretOffset && editor.CaretOffset <= segment.EndOffset) {
-						link.Links.Insert (0, segment);
-					} else {
-						link.AddLink (segment);
-					}
-				}
-			}
-			links.Add (link);
+			var links = await GetTextLinksAsync (doc, editor.CaretOffset, symbol);
 
 			editor.StartTextLinkMode (new TextLinkModeOptions (links, (arg) => {
 				//If user cancel renaming revert changes
@@ -159,6 +130,34 @@ namespace MonoDevelop.Refactoring.Rename
 					}
 				}
 			}) { TextLinkPurpose = TextLinkPurpose.Rename });
+		}
+
+		internal static async Task<List<TextLink>> GetTextLinksAsync (Ide.Gui.Document doc, int caretOffset, ISymbol symbol)
+		{
+			var links = new List<TextLink> ();
+			var link = new TextLink ("name");
+
+			var documents = ImmutableHashSet.Create (doc.AnalysisDocument);
+
+			foreach (var loc in symbol.Locations) {
+				if (loc.IsInSource && FilePath.PathComparer.Equals (loc.SourceTree.FilePath, doc.FileName)) {
+					link.AddLink (new TextSegment (loc.SourceSpan.Start, loc.SourceSpan.Length));
+				}
+			}
+
+			foreach (var mref in await SymbolFinder.FindReferencesAsync (symbol, doc.AnalysisDocument.Project.Solution, documents, default (CancellationToken))) {
+				foreach (var loc in mref.Locations) {
+					var span = loc.Location.SourceSpan;
+					var segment = new TextSegment (span.Start, span.Length);
+					if (segment.Offset <= caretOffset && caretOffset <= segment.EndOffset) {
+						link.Links.Insert (0, segment);
+					} else {
+						link.AddLink (segment);
+					}
+				}
+			}
+			links.Add (link);
+			return links;
 		}
 
 		public class RenameProperties

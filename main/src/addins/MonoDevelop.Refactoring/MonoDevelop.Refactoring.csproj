@@ -1,78 +1,24 @@
-<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
   <Import Project="..\..\..\MonoDevelop.props" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProductVersion>8.0.30703</ProductVersion>
-    <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>{100568FC-F4E8-439B-94AD-41D11724E45B}</ProjectGuid>
-    <OutputType>Library</OutputType>
-    <AssemblyName>MonoDevelop.Refactoring</AssemblyName>
-    <RootNamespace>MonoDevelop.Refactoring</RootNamespace>
-    <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DebugSymbols>True</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>False</Optimize>
+    <TargetFrameworkVersion>$(MDFrameworkVersion)</TargetFrameworkVersion>
     <OutputPath>..\..\..\build\AddIns\MonoDevelop.Refactoring</OutputPath>
-    <DefineConstants>DEBUG</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <ConsolePause>False</ConsolePause>
-    <NoWarn>1591;1573</NoWarn>
-    <DocumentationFile>..\..\..\build\AddIns\MonoDevelop.Refactoring\MonoDevelop.Refactoring.xml</DocumentationFile>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>..\..\..\build\AddIns\MonoDevelop.Refactoring</OutputPath>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <ConsolePause>False</ConsolePause>
-    <DebugSymbols>true</DebugSymbols>
-    <NoWarn>1591;1573</NoWarn>
-    <DocumentationFile>..\..\..\build\AddIns\MonoDevelop.Refactoring\MonoDevelop.Refactoring.xml</DocumentationFile>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'DebugMac|AnyCPU' ">
-    <Optimize>false</Optimize>
-    <OutputPath>..\..\..\build\AddIns\MonoDevelop.Refactoring</OutputPath>
-    <DefineConstants>DEBUG,MAC</DefineConstants>
-    <WarningLevel>4</WarningLevel>
-    <NoWarn>1591;1573</NoWarn>
-    <DebugSymbols>true</DebugSymbols>
-    <DocumentationFile>..\..\..\build\AddIns\MonoDevelop.Refactoring\MonoDevelop.Refactoring.xml</DocumentationFile>
-    <DebugType>full</DebugType>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'ReleaseMac|AnyCPU' ">
-    <Optimize>true</Optimize>
-    <OutputPath>..\..\..\build\AddIns\MonoDevelop.Refactoring</OutputPath>
-    <DefineConstants>MAC</DefineConstants>
-    <WarningLevel>4</WarningLevel>
-    <NoWarn>1591;1573</NoWarn>
-    <DebugSymbols>true</DebugSymbols>
-    <DocumentationFile>..\..\..\build\AddIns\MonoDevelop.Refactoring\MonoDevelop.Refactoring.xml</DocumentationFile>
-    <DebugType>pdbonly</DebugType>
-  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'DebugMac|AnyCPU' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'ReleaseMac|AnyCPU' " />
   <ItemGroup>
     <Reference Include="System" />
-    <Reference Include="gtk-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f">
-      <SpecificVersion>False</SpecificVersion>
-    </Reference>
-    <Reference Include="gdk-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f">
-      <SpecificVersion>False</SpecificVersion>
-    </Reference>
+    <Reference Include="gtk-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f" />
+    <Reference Include="gdk-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f" />
     <Reference Include="Mono.Posix" />
-    <Reference Include="pango-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f">
-      <SpecificVersion>False</SpecificVersion>
-    </Reference>
-    <Reference Include="glib-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f">
-      <SpecificVersion>False</SpecificVersion>
-    </Reference>
-    <Reference Include="atk-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f">
-      <SpecificVersion>False</SpecificVersion>
-    </Reference>
+    <Reference Include="pango-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f" />
+    <Reference Include="glib-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f" />
+    <Reference Include="atk-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f" />
     <Reference Include="System.Core" />
     <Reference Include="System.Xml" />
     <Reference Include="Mono.Cairo" />
@@ -113,8 +59,12 @@
       <HintPath>..\..\..\build\bin\Microsoft.CodeAnalysis.Features.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.EditorFeatures">
+      <HintPath>..\..\..\build\bin\Microsoft.CodeAnalysis.EditorFeatures.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Reference Include="System.ValueTuple">
-      <HintPath>..\..\..\packages\System.ValueTuple.4.3.1\lib\netstandard1.0\System.ValueTuple.dll</HintPath>
+      <HintPath>..\..\..\packages\System.ValueTuple.4.4.0\lib\netstandard1.0\System.ValueTuple.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="System.Composition.TypedParts">
@@ -125,6 +75,18 @@
       <HintPath>..\..\..\build\bin\System.Composition.Hosting.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.Workspaces.Desktop">
+      <HintPath>..\..\..\build\bin\Microsoft.CodeAnalysis.Workspaces.Desktop.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.CSharp.EditorFeatures">
+      <HintPath>..\..\..\build\bin\Microsoft.CodeAnalysis.CSharp.EditorFeatures.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="System.Threading.Tasks.Extensions">
+      <HintPath>..\..\..\packages\System.Threading.Tasks.Extensions.4.3.0\lib\netstandard1.0\System.Threading.Tasks.Extensions.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
   </ItemGroup>
   <ItemGroup Condition=" '$(Configuration)' == 'Debug' OR '$(Configuration)' == 'DebugMac' ">
     <Reference Include="ClrHeapAllocationAnalyzer">
@@ -133,7 +95,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="AssemblyInfo.cs" />
-    <Compile Include="gtk-gui\generated.cs" />
     <Compile Include="MonoDevelop.AnalysisCore\Gui\ResultsEditorExtension.cs" />
     <Compile Include="MonoDevelop.AnalysisCore\Gui\ResultTooltipProvider.cs" />
     <Compile Include="MonoDevelop.AnalysisCore\Gui\AnalysisOptionsPanel.cs" />
@@ -145,15 +106,11 @@
     <Compile Include="MonoDevelop.Refactoring\Change.cs" />
     <Compile Include="MonoDevelop.Refactoring.Rename\RenameRefactoring.cs" />
     <Compile Include="MonoDevelop.Refactoring.Rename\RenameItemDialog.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.Refactoring.Rename.RenameItemDialog.cs" />
     <Compile Include="MonoDevelop.Refactoring\RefactoringOptions.cs" />
     <Compile Include="MonoDevelop.Refactoring\RefactoringPreviewDialog.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.Refactoring.RefactoringPreviewDialog.cs" />
     <Compile Include="MonoDevelop.CodeActions\CodeActionEditorExtension.cs" />
     <Compile Include="MonoDevelop.CodeActions\CodeActionPanelWidget.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.CodeActions.ContextActionPanelWidget.cs" />
     <Compile Include="MonoDevelop.CodeIssues\CodeIssuePanelWidget.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.CodeIssues.CodeIssuePanelWidget.cs" />
     <Compile Include="AddinInfo.cs" />
     <Compile Include="MonoDevelop.CodeIssues\DiagnosticResult.cs" />
     <Compile Include="MonoDevelop.CodeActions\CodeRefactoringDescriptor.cs" />
@@ -162,12 +119,6 @@
     <Compile Include="MonoDevelop.CodeIssues\CodeDiagnosticRunner.cs" />
     <Compile Include="MonoDevelop.CodeActions\CodeActionContainer.cs" />
     <Compile Include="MonoDevelop.AnalysisCore\IssueMarker.cs" />
-    <Compile Include="MonoDevelop.CodeIssues\CodeDiagnosticProvider.cs" />
-    <Compile Include="MonoDevelop.CodeIssues\BuiltInCodeDiagnosticProvider.cs" />
-    <Compile Include="MonoDevelop.CodeIssues\AnalyzersFromAssembly.cs" />
-    <Compile Include="MonoDevelop.CodeActions\ValidCodeAction.cs" />
-    <Compile Include="MonoDevelop.CodeActions\ValidCodeDiagnosticAction.cs" />
-    <Compile Include="MonoDevelop.CodeIssues\CodeDiagnosticFixDescriptor.cs" />
     <Compile Include="MonoDevelop.Refactoring\Commands.cs" />
     <Compile Include="MonoDevelop.Refactoring\RefactoringSymbolInfo.cs" />
     <Compile Include="MonoDevelop.CodeIssues\CodeFix.cs" />
@@ -180,7 +131,6 @@
     <Compile Include="MonoDevelop.CodeActions\CodeFixMenuService.cs" />
     <Compile Include="MonoDevelop.Refactoring.SignatureChange\SignatureChangeOptionService.cs" />
     <Compile Include="MonoDevelop.Refactoring.SignatureChange\SignatureChangeDialog.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.Refactoring.SignatureChange.SignatureChangeDialog.cs" />
     <Compile Include="MonoDevelop.Refactoring.GenerateType\GenerateTypeDialog.cs" />
     <Compile Include="MonoDevelop.Refactoring.GenerateType\GenerateTypeOptionsService.cs" />
     <Compile Include="MonoDevelop.Refactoring\QuickFixMenuHandler.cs" />
@@ -189,100 +139,45 @@
     <Compile Include="MonoDevelop.CodeActions\RoslynProgressTracker.cs" />
     <Compile Include="MonoDevelop.Refactoring.ExtractInterface\ExtractInterfaceOptionService.cs" />
     <Compile Include="MonoDevelop.Refactoring.ExtractInterface\ExtractInterfaceDialog.cs" />
+    <Compile Include="MonoDevelop.AnalysisCore\MonoDevelopWorkspaceDiagnosticAnalyzerProviderService.cs" />
+    <Compile Include="MonoDevelop.AnalysisCore\MonoDevelopWorkspaceDiagnosticAnalyzerProviderService.AnalyzerAssemblyLoader.cs" />
+    <Compile Include="MonoDevelop.Refactoring.PickMembersService\PickMembersService.cs" />
+    <Compile Include="MonoDevelop.Refactoring.PickMembersService\PickMembersDialog.cs" />
+    <Compile Include="MonoDevelop.AnalysisCore\MonoDevelopWorkspaceDiagnosticAnalyzerProviderService.OptionsTable.cs" />
+    <Compile Include="Gui\MonoDevelop.CodeActions.ContextActionPanelWidget.cs" />
+    <Compile Include="Gui\MonoDevelop.CodeIssues.CodeIssuePanelWidget.cs" />
+    <Compile Include="Gui\MonoDevelop.Refactoring.RefactoringPreviewDialog.cs" />
+    <Compile Include="Gui\MonoDevelop.Refactoring.Rename.RenameItemDialog.cs" />
+    <Compile Include="Gui\MonoDevelop.Refactoring.SignatureChange.SignatureChangeDialog.cs" />
+    <Compile Include="MonoDevelop.Refactoring\CodeGenerationPanel.cs" />
+    <Compile Include="MonoDevelop.Refactoring\FindReferenceUsagesProvider.cs" />
   </ItemGroup>
   <ItemGroup>
-    <Folder Include="MonoDevelop.Refactoring\" />
-    <Folder Include="MonoDevelop.Refactoring.Rename\" />
-    <Folder Include="MonoDevelop.AnalysisCore\" />
-    <Folder Include="MonoDevelop.CodeIssues\" />
-    <Folder Include="MonoDevelop.CodeActions\" />
-    <Folder Include="MonoDevelop.CodeIssues\Pad\" />
-    <Folder Include="MonoDevelop.Refactoring.SignatureChange\" />
-    <Folder Include="MonoDevelop.Refactoring.GenerateType\" />
-    <Folder Include="MonoDevelop.Refactoring.PackageInstaller\" />
-    <Folder Include="MonoDevelop.Refactoring.ExtractInterface\" />
-  </ItemGroup>
-  <ItemGroup>
-    <EmbeddedResource Include="MonoDevelop.Refactoring.addin.xml">
-      <LogicalName>MonoDevelop.Refactoring.addin.xml</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="gtk-gui\gui.stetic">
-      <LogicalName>gui.stetic</LogicalName>
-    </EmbeddedResource>
-  </ItemGroup>
-  <ItemGroup>
-    <EmbeddedResource Include="icons\prefs-code-actions-16.png">
-      <LogicalName>prefs-code-actions-16.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-actions-16%402x.png">
-      <LogicalName>prefs-code-actions-16@2x.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-actions-16~dark.png">
-      <LogicalName>prefs-code-actions-16~dark.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-actions-16~dark%402x.png">
-      <LogicalName>prefs-code-actions-16~dark@2x.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-actions-16~sel.png">
-      <LogicalName>prefs-code-actions-16~sel.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-actions-16~sel%402x.png">
-      <LogicalName>prefs-code-actions-16~sel@2x.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-actions-16~dark~sel.png">
-      <LogicalName>prefs-code-actions-16~dark~sel.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-actions-16~dark~sel%402x.png">
-      <LogicalName>prefs-code-actions-16~dark~sel@2x.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-rules-16.png">
-      <LogicalName>prefs-code-rules-16.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-rules-16%402x.png">
-      <LogicalName>prefs-code-rules-16@2x.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-rules-16~dark.png">
-      <LogicalName>prefs-code-rules-16~dark.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-rules-16~dark%402x.png">
-      <LogicalName>prefs-code-rules-16~dark@2x.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-rules-16~sel.png">
-      <LogicalName>prefs-code-rules-16~sel.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-rules-16~sel%402x.png">
-      <LogicalName>prefs-code-rules-16~sel@2x.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-rules-16~dark~sel.png">
-      <LogicalName>prefs-code-rules-16~dark~sel.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-rules-16~dark~sel%402x.png">
-      <LogicalName>prefs-code-rules-16~dark~sel@2x.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-analysis-16.png">
-      <LogicalName>prefs-code-analysis-16.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-analysis-16%402x.png">
-      <LogicalName>prefs-code-analysis-16@2x.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-analysis-16~dark.png">
-      <LogicalName>prefs-code-analysis-16~dark.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-analysis-16~dark%402x.png">
-      <LogicalName>prefs-code-analysis-16~dark@2x.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-analysis-16~sel.png">
-      <LogicalName>prefs-code-analysis-16~sel.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-analysis-16~sel%402x.png">
-      <LogicalName>prefs-code-analysis-16~sel@2x.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-analysis-16~dark~sel.png">
-      <LogicalName>prefs-code-analysis-16~dark~sel.png</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="icons\prefs-code-analysis-16~dark~sel%402x.png">
-      <LogicalName>prefs-code-analysis-16~dark~sel@2x.png</LogicalName>
-    </EmbeddedResource>
+    <EmbeddedResource Include="MonoDevelop.Refactoring.addin.xml" />
+    <EmbeddedResource Include="icons\prefs-code-actions-16.png" />
+    <EmbeddedResource Include="icons\prefs-code-actions-16%402x.png" />
+    <EmbeddedResource Include="icons\prefs-code-actions-16~dark.png" />
+    <EmbeddedResource Include="icons\prefs-code-actions-16~dark%402x.png" />
+    <EmbeddedResource Include="icons\prefs-code-actions-16~sel.png" />
+    <EmbeddedResource Include="icons\prefs-code-actions-16~sel%402x.png" />
+    <EmbeddedResource Include="icons\prefs-code-actions-16~dark~sel.png" />
+    <EmbeddedResource Include="icons\prefs-code-actions-16~dark~sel%402x.png" />
+    <EmbeddedResource Include="icons\prefs-code-rules-16.png" />
+    <EmbeddedResource Include="icons\prefs-code-rules-16%402x.png" />
+    <EmbeddedResource Include="icons\prefs-code-rules-16~dark.png" />
+    <EmbeddedResource Include="icons\prefs-code-rules-16~dark%402x.png" />
+    <EmbeddedResource Include="icons\prefs-code-rules-16~sel.png" />
+    <EmbeddedResource Include="icons\prefs-code-rules-16~sel%402x.png" />
+    <EmbeddedResource Include="icons\prefs-code-rules-16~dark~sel.png" />
+    <EmbeddedResource Include="icons\prefs-code-rules-16~dark~sel%402x.png" />
+    <EmbeddedResource Include="icons\prefs-code-analysis-16.png" />
+    <EmbeddedResource Include="icons\prefs-code-analysis-16%402x.png" />
+    <EmbeddedResource Include="icons\prefs-code-analysis-16~dark.png" />
+    <EmbeddedResource Include="icons\prefs-code-analysis-16~dark%402x.png" />
+    <EmbeddedResource Include="icons\prefs-code-analysis-16~sel.png" />
+    <EmbeddedResource Include="icons\prefs-code-analysis-16~sel%402x.png" />
+    <EmbeddedResource Include="icons\prefs-code-analysis-16~dark~sel.png" />
+    <EmbeddedResource Include="icons\prefs-code-analysis-16~dark~sel%402x.png" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\core\MonoDevelop.Ide\MonoDevelop.Ide.csproj">
@@ -325,7 +220,7 @@
       <Name>MonoDevelop.SourceEditor</Name>
       <Private>False</Private>
     </ProjectReference>
-    <ProjectReference Include="..\..\..\external\RefactoringEssentials\RefactoringEssentials.2017\RefactoringEssentials.csproj">
+    <ProjectReference Include="..\..\..\external\RefactoringEssentials\RefactoringEssentials\RefactoringEssentials.csproj">
       <Project>{C465A5DC-AD28-49A2-89C0-F81838814A7E}</Project>
       <Name>RefactoringEssentials</Name>
       <Private>True</Private>
@@ -336,12 +231,11 @@
     <InternalsVisibleTo Include="MonoDevelop.CSharpBinding" />
     <InternalsVisibleTo Include="MonoDevelop.PackageManagement" />
     <InternalsVisibleTo Include="MonoDevelop.MonoDroid" />
+    <InternalsVisibleTo Include="MonoDevelop.CSharpBinding.Tests" />
+    <InternalsVisibleTo Include="MonoDevelop.Refactoring.Tests" />
   </ItemGroup>
-  <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
   <ItemGroup>
     <None Include="MonoDevelop.Refactoring\QuickFixHandler.cs" />
-    <None Include="gtk-gui\MonoDevelop.Refactoring.OverridesImplementsDialog.cs" />
-    <None Include="gtk-gui\MonoDevelop.Refactoring.EncapsulateFieldDialog.cs" />
     <None Include="MonoDevelop.CodeIssues\Pad\Runner\AnalysisJobQueue.cs" />
     <None Include="MonoDevelop.CodeIssues\Pad\Runner\CodeIssueEventArgs.cs" />
     <None Include="MonoDevelop.CodeIssues\Pad\Runner\IAnalysisJob.cs" />
@@ -380,14 +274,5 @@
     <None Include="MonoDevelop.CodeIssues\Pad\CategoryGroupingProvider.cs" />
     <None Include="packages.config" />
   </ItemGroup>
-  <ProjectExtensions>
-    <MonoDevelop>
-      <Properties>
-        <Policies>
-          <TextStylePolicy inheritsSet="null" scope="text/x-csharp" />
-          <CSharpFormattingPolicy IndentBlock="True" IndentBraces="False" IndentSwitchCaseSection="True" LabelPositioning="OneLess" NewLinesForBracesInTypes="True" NewLinesForBracesInMethods="True" SpaceWithinMethodDeclarationParenthesis="False" SpaceBetweenEmptyMethodDeclarationParentheses="False" SpaceWithinMethodCallParentheses="False" SpaceBetweenEmptyMethodCallParentheses="False" SpaceAfterControlFlowStatementKeyword="True" SpaceWithinExpressionParentheses="False" SpaceWithinCastParentheses="False" SpaceWithinOtherParentheses="False" SpaceAfterCast="False" SpacesIgnoreAroundVariableDeclaration="False" SpaceBetweenEmptySquareBrackets="False" SpaceWithinSquareBrackets="False" SpaceAfterColonInBaseTypeDeclaration="True" SpaceAfterComma="True" SpaceAfterDot="False" SpaceAfterSemicolonsInForStatement="True" SpaceBeforeColonInBaseTypeDeclaration="True" SpaceBeforeComma="False" SpaceBeforeDot="False" SpaceBeforeSemicolonsInForStatement="False" SpacingAroundBinaryOperator="Single" WrappingPreserveSingleLine="True" WrappingKeepStatementsOnSingleLine="True" PlaceSystemDirectiveFirst="True" IndentSwitchSection="False" NewLinesForBracesInProperties="False" NewLinesForBracesInAccessors="False" NewLinesForBracesInAnonymousMethods="False" NewLinesForBracesInControlBlocks="False" NewLinesForBracesInAnonymousTypes="False" NewLinesForBracesInObjectCollectionArrayInitializers="False" NewLinesForBracesInLambdaExpressionBody="False" NewLineForElse="False" NewLineForCatch="False" NewLineForFinally="False" NewLineForMembersInObjectInit="False" NewLineForMembersInAnonymousTypes="False" NewLineForClausesInQuery="False" SpacingAfterMethodDeclarationName="True" SpaceAfterMethodCallName="True" SpaceBeforeOpenSquareBracket="True" scope="text/x-csharp" />
-        </Policies>
-      </Properties>
-    </MonoDevelop>
-  </ProjectExtensions>
+  <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
 </Project>

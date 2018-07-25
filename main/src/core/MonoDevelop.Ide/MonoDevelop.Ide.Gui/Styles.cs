@@ -271,6 +271,8 @@ namespace MonoDevelop.Ide.Gui
 			public static Color SmartTagMarkerColorLight { get; internal set; }
 			public static Color SmartTagMarkerColorDark { get; internal set; }
 			public static Color SearchErrorForegroundColor { get; internal set; }
+			public static Color SearchMarkerFallbackColor { get; internal set; }
+			public static Color SearchMarkerSelectedFallbackColor { get; internal set; }
 		}
 
 		public static class KeyBindingsPanel
@@ -281,6 +283,14 @@ namespace MonoDevelop.Ide.Gui
 			public static Color KeyDuplicateForegroundColor { get; internal set; }
 			public static Color KeyConflictBackgroundColor { get; internal set; }
 			public static Color KeyConflictForegroundColor { get; internal set; }
+		}
+
+		// Notification bar
+		internal static class NotificationBar
+		{
+			public static Color BarBackgroundColor { get; internal set; }
+			public static Color ButtonLabelColor { get; internal set; }
+			public static Color BarBorderColor { get; } = Color.FromName ("#000000").WithAlpha (0.1);
 		}
 
 		// Helper methods
@@ -431,6 +441,8 @@ namespace MonoDevelop.Ide.Gui
 			Editor.SmartTagMarkerColorLight = Color.FromName ("#ff70fe").WithAlpha (.5);
 			Editor.SmartTagMarkerColorDark = Color.FromName ("#ffffff").WithAlpha (.5);
 			Editor.SearchErrorForegroundColor = ErrorForegroundColor;
+			Editor.SearchMarkerFallbackColor = Color.FromName ("#f3da2d");
+			Editor.SearchMarkerSelectedFallbackColor = Color.FromName ("#ffaf45");
 
 			// Key Bindings Preferences
 
@@ -566,6 +578,11 @@ namespace MonoDevelop.Ide.Gui
 			Wizard.PageSeparatorColor = ThinSplitterColor;
 			Wizard.ContentSeparatorColor = Color.FromName ("#d2d5d9");
 			Wizard.ContentShadowColor = ThinSplitterColor;
+
+			// Notification Bar
+
+			NotificationBar.BarBackgroundColor = Color.FromName ("#f3f3f3");
+			NotificationBar.ButtonLabelColor = Color.FromName ("#444444");
 		}
 
 		internal static void LoadDarkStyle ()
@@ -682,6 +699,12 @@ namespace MonoDevelop.Ide.Gui
 			Wizard.PageSeparatorColor = ThinSplitterColor;
 			Wizard.ContentSeparatorColor = Color.FromName ("#6e6e6e");
 			Wizard.ContentShadowColor = ThinSplitterColor;
+
+			// Notification Bar
+
+			NotificationBar.BarBackgroundColor = Color.FromName ("#222222");
+			NotificationBar.ButtonLabelColor = Color.FromName ("#BEBEBE");
+
 		}
 
 		static StylesStringTagModel tagModel;

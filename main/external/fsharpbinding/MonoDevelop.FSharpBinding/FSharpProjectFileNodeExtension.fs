@@ -24,9 +24,7 @@ type FSharpProjectNodeCommandHandler() =
         monitor.Step (1)
         monitor.EndTask()
 
-    member x.MoveNodes (moveToNode: ProjectFile) (movingNode:ProjectFile) position =
-        let projectFile = movingNode.Project.FileName.ToString()
-
+    let rec moveNodeInXDoc (xdoc:XElement) (moveToNode: ProjectFile) (movingNode:ProjectFile) position isNested =
         let descendantsNamed ns name ancestor =
             ///partially apply the default namespace of msbuild to xs
             let xd = xs ns
@@ -40,10 +38,6 @@ type FSharpProjectNodeCommandHandler() =
           | Some l -> l.Value
           | None -> node |> attributeValue "Include"
 
-        //open project file
-        use file = IO.File.Open(projectFile, FileMode.Open)
-        let xdoc = XElement.Load(file)
-        file.Close()
         let defaultNamespace = xdoc.GetDefaultNamespace().NamespaceName
         let descendantsByNamespace = descendantsNamed defaultNamespace
         //get movable nodes from the project file
@@ -70,16 +64,33 @@ type FSharpProjectNodeCommandHandler() =
         match (movingElement, moveToElement, position) with
         | Some(moving), Some(moveTo), (DropPosition.Before | DropPosition.After) ->
             moving.Remove()
-            //if the moving node contains a DependentUpon node as a child remove the DependentUpon nodes
-            moving |> descendantsByNamespace "DependentUpon" |> Seq.iter (fun node -> node.Remove())
+            // If the moving node contains a DependentUpon node as a child remove the DependentUpon nodes,
+            // only if the moving node was moved directly - not via moving the parent node
+            if not isNested then
+                moving |> descendantsByNamespace "DependentUpon" |> Seq.iter (fun node -> node.Remove())
             //get the add function using the position
             let add = addFunction moveTo position
             add(moving)
 
-            let settings = XmlWriterSettings(OmitXmlDeclaration = true, Indent = true)
-            use writer = XmlWriter.Create(projectFile, settings)
-            xdoc.Save(writer);
+            // If any of the project files depend on the file
+            // being moved, then move those files below the file being moved
+            movingNode.Project.Files
+            |> Seq.filter(fun f -> f.DependsOnFile = movingNode)
+            |> Seq.iter(fun f -> moveNodeInXDoc xdoc movingNode f DropPosition.After true)
+
         | _ -> ()//If we cant find both nodes or the position isnt before or after we dont continue
+
+    member x.MoveNodes (moveToNode: ProjectFile) (movingNode:ProjectFile) position =
+        let projectFile = movingNode.Project.FileName.ToString()
+
+        let xdoc = XElement.Load(projectFile)
+
+        moveNodeInXDoc xdoc moveToNode movingNode position false
+
+        let settings = XmlWriterSettings(OmitXmlDeclaration = true, Indent = true)
+        use writer = XmlWriter.Create(projectFile, settings)
+        xdoc.Save(writer);
+        writer.Close()
 
     /// Implement drag and drop of nodes in F# projects in the solution explorer.
     override x.OnNodeDrop(dataObject, dragOperation, position) =
@@ -143,7 +154,14 @@ type FSharpProjectFileNodeExtension() =
         | SupportedProjectFolder(folder) ->
             let childfile =
                 folder.Project.Files
-                |> Seq.tryFind (fun p -> p.FilePath.IsChildPathOf folder.Path)
+                |> Seq.tryFind (fun p ->
+                    let filePath =
+                        match p.IsLink with
+                        | true -> 
+                            p.Link.ToAbsolute(folder.Project.FileName.ParentDirectory)
+                        | false ->
+                            p.FilePath
+                    filePath.IsChildPathOf folder.Path)
 
             match childfile with
             | Some file -> folder.Project.Files.IndexOf file
@@ -162,12 +180,16 @@ type FSharpProjectFileNodeExtension() =
         // Extend any file or folder belonging to a F# project
         typedefof<ProjectFile>.IsAssignableFrom(dataType) || typedefof<ProjectFolder>.IsAssignableFrom (dataType)
 
-    override x.CompareObjects(thisNode:ITreeNavigator, otherNode:ITreeNavigator) : int =
-        match (otherNode.DataItem, thisNode.DataItem) with
-        | SupportedProjectFile other, SupportedProjectFile thisNode -> compare (findIndex thisNode) (findIndex other)
-        | SupportedProjectFolder other, SupportedProjectFolder thisNode -> compare (findIndex thisNode) (findIndex other)
-        | SupportedProjectFile other, SupportedProjectFolder thisNode -> compare (findIndex thisNode) (findIndex other)
-        | SupportedProjectFolder other, SupportedProjectFile thisNode -> compare (findIndex thisNode) (findIndex other)
+    member x.Compare (thisDataItem: 'a) (otherDataItem: 'a) =
+        match (thisDataItem, otherDataItem) with
+        | SupportedProjectFile thisNode, SupportedProjectFile other -> compare (findIndex thisNode) (findIndex other)
+        | SupportedProjectFolder thisNode, SupportedProjectFolder other -> compare (findIndex thisNode) (findIndex other)
+        | SupportedProjectFile thisNode, SupportedProjectFolder other -> compare (findIndex thisNode) (findIndex other)
+        | SupportedProjectFolder thisNode, SupportedProjectFile other -> compare (findIndex thisNode) (findIndex other)
         | _ -> NodeBuilder.DefaultSort
 
+    override x.CompareObjects(thisNode:ITreeNavigator, otherNode:ITreeNavigator) : int =
+        x.Compare thisNode.DataItem otherNode.DataItem
+
     override x.CommandHandlerType = typeof<FSharpProjectNodeCommandHandler>
+

@@ -39,11 +39,15 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Linq;
 
+using Microsoft.CodeAnalysis.Utilities;
+using Microsoft.CodeAnalysis.Editor.Shared.Utilities;
+
 using Mono.Unix;
 
 using Mono.Addins;
 using MonoDevelop.Components.Commands;
 using MonoDevelop.Core;
+using MonoDevelop.Core.Assemblies;
 using MonoDevelop.Ide.Gui.Dialogs;
 using MonoDevelop.Ide.Gui;
 using MonoDevelop.Core.Instrumentation;
@@ -60,9 +64,13 @@ namespace MonoDevelop.Ide
 	public class IdeStartup: IApplication
 	{
 		Socket listen_socket   = null;
-		ArrayList errorsList = new ArrayList ();
+		List<AddinError> errorsList = new List<AddinError> ();
 		bool initialized;
 		static readonly int ipcBasePort = 40000;
+		static Stopwatch startupTimer = new Stopwatch ();
+		static Stopwatch timeToCodeTimer = new Stopwatch ();
+
+		static TimeToCodeMetadata ttcMetadata;
 		
 		Task<int> IApplication.Run (string[] args)
 		{
@@ -75,12 +83,22 @@ namespace MonoDevelop.Ide
 		int Run (MonoDevelopOptions options)
 		{
 			LoggingService.LogInfo ("Starting {0} {1}", BrandingService.ApplicationLongName, IdeVersionInfo.MonoDevelopVersion);
+			LoggingService.LogInfo ("Build Information{0}{1}", Environment.NewLine, SystemInformation.GetBuildInformation ());
 			LoggingService.LogInfo ("Running on {0}", IdeVersionInfo.GetRuntimeInfo ());
 
 			//ensure native libs initialized before we hit anything that p/invokes
 			Platform.Initialize ();
+			GettextCatalog.Initialize ();
 
 			LoggingService.LogInfo ("Operating System: {0}", SystemInformation.GetOperatingSystemDescription ());
+
+			if (!Platform.IsWindows) {
+				// The assembly resolver for MSBuild 15 assemblies needs to be defined early on.
+				// Whilst Runtime.Initialize loads the MSBuild 15 assemblies from Mono this seems
+				// to be too late to prevent the MEF composition and the static registrar from
+				// failing to load the MonoDevelop.Ide assembly which now uses MSBuild 15 assemblies.
+				ResolveMSBuildAssemblies ();
+			}
 
 			Counters.Initialization.BeginTiming ();
 
@@ -94,6 +112,9 @@ namespace MonoDevelop.Ide
 			if (Platform.IsWindows && !CheckWindowsGtk ())
 				return 1;
 			SetupExceptionManager ();
+
+			// explicit GLib type system initialization for GLib < 2.36 before any other type system access
+			GLib.GType.Init ();
 
 			IdeApp.Customizer = options.IdeCustomizer ?? new IdeCustomizer ();
 			try {
@@ -116,7 +137,7 @@ namespace MonoDevelop.Ide
 
 			// XWT initialization
 			FilePath p = typeof(IdeStartup).Assembly.Location;
-			Platform.AssemblyLoad(p.ParentDirectory.Combine("Xwt.Gtk.dll"));
+			Runtime.LoadAssemblyFrom (p.ParentDirectory.Combine("Xwt.Gtk.dll"));
 			Xwt.Application.InitializeAsGuest (Xwt.ToolkitType.Gtk);
 			Xwt.Toolkit.CurrentEngine.RegisterBackend<IExtendedTitleBarWindowBackend,GtkExtendedTitleBarWindowBackend> ();
 			Xwt.Toolkit.CurrentEngine.RegisterBackend<IExtendedTitleBarDialogBackend,GtkExtendedTitleBarDialogBackend> ();
@@ -138,7 +159,10 @@ namespace MonoDevelop.Ide
 			// Set a synchronization context for the main gtk thread
 			SynchronizationContext.SetSynchronizationContext (DispatchService.SynchronizationContext);
 			Runtime.MainSynchronizationContext = SynchronizationContext.Current;
-			
+
+			// Initialize Roslyn's synchronization context
+			RoslynServices.RoslynService.Initialize ();
+
 			AddinManager.AddinLoadError += OnAddinError;
 			
 			var startupInfo = new StartupInfo (args);
@@ -212,7 +236,6 @@ namespace MonoDevelop.Ide
 				Counters.Initialization.Trace ("Loading Icons");
 				//force initialisation before the workbench so that it can register stock icons for GTK before they get requested
 				ImageService.Initialize ();
-				LocalizationService.Initialize ();
 
 				// If we display an error dialog before the main workbench window on OS X then a second application menu is created
 				// which is then replaced with a second empty Apple menu.
@@ -221,7 +244,7 @@ namespace MonoDevelop.Ide
 				IdeApp.Initialize (monitor);
 
 				if (errorsList.Count > 0) {
-					using (AddinLoadErrorDialog dlg = new AddinLoadErrorDialog ((AddinError[]) errorsList.ToArray (typeof(AddinError)), false)) {
+					using (AddinLoadErrorDialog dlg = new AddinLoadErrorDialog (errorsList.ToArray (), false)) {
 						if (!dlg.Run ())
 							return 1;
 					}
@@ -237,12 +260,17 @@ namespace MonoDevelop.Ide
 				// load previous combine
 				RecentFile openedProject = null;
 				if (IdeApp.Preferences.LoadPrevSolutionOnStartup && !startupInfo.HasSolutionFile && !IdeApp.Workspace.WorkspaceItemIsOpening && !IdeApp.Workspace.IsOpen) {
-					openedProject = DesktopService.RecentFiles.GetProjects ().FirstOrDefault ();
-					if (openedProject != null)
-						IdeApp.Workspace.OpenWorkspaceItem (openedProject.FileName).ContinueWith (t => IdeApp.OpenFiles (startupInfo.RequestedFileList), TaskScheduler.FromCurrentSynchronizationContext ());
+					openedProject = DesktopService.RecentFiles.MostRecentlyUsedProject;
+					if (openedProject != null) {
+						var metadata = GetOpenWorkspaceOnStartupMetadata ();
+						IdeApp.Workspace.OpenWorkspaceItem (openedProject.FileName, true, true, metadata).ContinueWith (t => IdeApp.OpenFiles (startupInfo.RequestedFileList, metadata), TaskScheduler.FromCurrentSynchronizationContext ());
+						startupInfo.OpenedRecentProject = true;
+					}
 				}
-				if (openedProject == null)
-					IdeApp.OpenFiles (startupInfo.RequestedFileList);
+				if (openedProject == null) {
+					IdeApp.OpenFiles (startupInfo.RequestedFileList, GetOpenWorkspaceOnStartupMetadata ());
+					startupInfo.OpenedFiles = startupInfo.HasFiles;
+				}
 				
 				monitor.Step (1);
 			
@@ -259,7 +287,7 @@ namespace MonoDevelop.Ide
 			}
 
 			if (errorsList.Count > reportedFailures) {
-				using (AddinLoadErrorDialog dlg = new AddinLoadErrorDialog ((AddinError[]) errorsList.ToArray (typeof(AddinError)), true))
+				using (AddinLoadErrorDialog dlg = new AddinLoadErrorDialog (errorsList.ToArray (), true))
 					dlg.Run ();
 			}
 			
@@ -285,6 +313,22 @@ namespace MonoDevelop.Ide
 				
 			AddinManager.AddExtensionNodeHandler("/MonoDevelop/Ide/InitCompleteHandlers", OnExtensionChanged);
 			StartLockupTracker ();
+
+			startupTimer.Stop ();
+
+			// Need to start this timer because we don't know yet if we've been asked to open a solution from the file manager.
+			timeToCodeTimer.Start ();
+			ttcMetadata = new TimeToCodeMetadata {
+				StartupTime = startupTimer.ElapsedMilliseconds
+			};
+
+			// Start this timer to limit the time to decide if the app was opened by a file manager
+			IdeApp.StartFMOpenTimer (FMOpenTimerExpired);
+			IdeApp.Workspace.FirstWorkspaceItemOpened += CompleteTimeToCode;
+
+			CreateStartupMetadata (startupInfo);
+
+			GLib.Idle.Add (OnIdle);
 			IdeApp.Run ();
 
 			IdeApp.Customizer.OnIdeShutdown ();
@@ -302,6 +346,89 @@ namespace MonoDevelop.Ide
 			MonoDevelop.Components.GtkWorkarounds.Terminate ();
 			
 			return 0;
+		}
+
+		void FMOpenTimerExpired ()
+		{
+			IdeApp.Workspace.FirstWorkspaceItemOpened -= CompleteTimeToCode;
+			timeToCodeTimer.Stop ();
+			timeToCodeTimer = null;
+			ttcMetadata = null;
+		}
+
+		/// <summary>
+		/// Resolves MSBuild 15.0 assemblies that are used by MonoDevelop.Ide and are included with Mono.
+		/// </summary>
+		void ResolveMSBuildAssemblies ()
+		{
+			var currentRuntime = MonoRuntimeInfo.FromCurrentRuntime ();
+			if (currentRuntime != null) {
+				msbuildBinDir = Path.Combine (currentRuntime.Prefix, "lib", "mono", "msbuild", "15.0", "bin");
+				if (Directory.Exists (msbuildBinDir)) {
+					AppDomain.CurrentDomain.AssemblyResolve += MSBuildAssemblyResolve;
+				}
+			}
+		}
+
+		string msbuildBinDir;
+
+		string[] msbuildAssemblies = new string [] {
+			"Microsoft.Build",
+			"Microsoft.Build.Engine",
+			"Microsoft.Build.Framework",
+			"Microsoft.Build.Tasks.Core",
+			"Microsoft.Build.Utilities.Core"
+		};
+
+		Assembly MSBuildAssemblyResolve (object sender, ResolveEventArgs args)
+		{
+			var asmName = new AssemblyName (args.Name);
+			if (!msbuildAssemblies.Any (msbuildAssembly => StringComparer.OrdinalIgnoreCase.Equals (msbuildAssembly, asmName.Name)))
+				return null;
+
+			string fullPath = Path.Combine (msbuildBinDir, asmName.Name + ".dll");
+			if (File.Exists (fullPath)) {
+				return Assembly.LoadFrom (fullPath);
+			}
+
+			return null;
+		}
+
+		static bool OnIdle ()
+		{
+			Composition.CompositionManager.InitializeAsync ().Ignore ();
+			return false;
+		}
+
+		async void CreateStartupMetadata (StartupInfo startupInfo)
+		{
+			var result = await Task.Run (() => DesktopService.PlatformTelemetry);
+			if (result == null) {
+				return;
+			}
+			Counters.Startup.Inc (GetStartupMetadata (startupInfo, result));
+			IdeApp.OnStartupCompleted ();
+		}
+
+		static void CompleteTimeToCode (object sender, EventArgs args)
+		{
+			IdeApp.Workspace.FirstWorkspaceItemOpened -= CompleteTimeToCode;
+
+			if (timeToCodeTimer == null) {
+				return;
+			}
+
+			timeToCodeTimer.Stop ();
+			ttcMetadata.SolutionLoadTime = timeToCodeTimer.ElapsedMilliseconds;
+
+			ttcMetadata.CorrectedDuration = ttcMetadata.StartupTime + ttcMetadata.SolutionLoadTime;
+
+			timeToCodeTimer = null;
+
+			if (IdeApp.ReportTimeToCode) {
+				Counters.TimeToCode.Inc ("SolutionLoaded", ttcMetadata);
+				IdeApp.ReportTimeToCode = false;
+			}
 		}
 
 		static DateTime lastIdle;
@@ -544,7 +671,7 @@ namespace MonoDevelop.Ide
 		
 		static void HandleException (Exception ex, bool willShutdown)
 		{
-			var msg = String.Format ("An unhandled exception has occured. Terminating {0}? {1}", BrandingService.ApplicationName, willShutdown);
+			var msg = String.Format ("An unhandled exception has occurred. Terminating {0}? {1}", BrandingService.ApplicationName, willShutdown);
 			var aggregateException = ex as AggregateException;
 			if (aggregateException != null) {
 				aggregateException.Flatten ().Handle (innerEx => {
@@ -575,6 +702,12 @@ namespace MonoDevelop.Ide
 		
 		public static int Main (string[] args, IdeCustomizer customizer = null)
 		{
+			// Using a Stopwatch instead of a TimerCounter since calling
+			// TimerCounter.BeginTiming here would occur before any timer
+			// handlers can be registered. So instead the startup duration is
+			// set as a metadata property on the Counters.Startup counter.
+			startupTimer.Start ();
+
 			var options = MonoDevelopOptions.Parse (args);
 			if (options.ShowHelp || options.Error != null)
 				return options.Error != null? -1 : 0;
@@ -627,7 +760,7 @@ namespace MonoDevelop.Ide
 				foreach (var path in paths) {
 					var file = BrandingService.GetFile (path.Replace ('/',Path.DirectorySeparatorChar));
 					if (File.Exists (file)) {
-						Assembly asm = Platform.AssemblyLoad(file);
+						Assembly asm = Runtime.LoadAssemblyFrom (file);
 						var t = asm.GetType (type, true);
 						var c = Activator.CreateInstance (t) as IdeCustomizer;
 						if (c == null)
@@ -637,6 +770,30 @@ namespace MonoDevelop.Ide
 				}
 			}
 			return null;
+		}
+
+		static StartupMetadata GetStartupMetadata (StartupInfo startupInfo, IPlatformTelemetryDetails platformDetails)
+		{
+			var assetType = StartupAssetType.FromStartupInfo (startupInfo);
+
+			return new StartupMetadata {
+				CorrectedStartupTime = startupTimer.ElapsedMilliseconds,
+				StartupType = 0,
+				AssetTypeId = assetType.Id,
+				AssetTypeName = assetType.Name,
+				IsInitialRun = IdeApp.IsInitialRun,
+				IsInitialRunAfterUpgrade = IdeApp.IsInitialRunAfterUpgrade,
+				TimeSinceMachineStart = platformDetails.TimeSinceMachineStart.Seconds,
+				TimeSinceLogin = platformDetails.TimeSinceLogin.Seconds
+			};
+		}
+
+		internal static OpenWorkspaceItemMetadata GetOpenWorkspaceOnStartupMetadata ()
+		{
+			var metadata = new OpenWorkspaceItemMetadata {
+				OnStartup = true
+			};
+			return metadata;
 		}
 	}
 	

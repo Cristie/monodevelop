@@ -24,13 +24,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 using System;
-using MonoDevelop.Projects;
-using MonoDevelop.Projects.MSBuild;
-using MonoDevelop.Core;
-using MonoDevelop.Core.Serialization;
-using MonoDevelop.Projects.Extensions;
 using System.Collections.Generic;
+
+using MonoDevelop.Core;
 using MonoDevelop.Core.Instrumentation;
+using MonoDevelop.Core.Serialization;
+using MonoDevelop.Projects;
 
 namespace MonoDevelop.CSharp.Project
 {
@@ -50,11 +49,6 @@ namespace MonoDevelop.CSharp.Project
 
 		// Keep the platforms combo of CodeGenerationPanelWidget in sync with this list
 		public static IList<string> SupportedPlatforms = new string[] { "anycpu", "x86", "x64", "itanium" };
-
-		static CSharpProject ()
-		{
-			ProjectSearchCategory.Init ();
-		}
 
 		public CSharpProject ()
 		{
@@ -133,6 +127,7 @@ namespace MonoDevelop.CSharp.Project
 				codePage = int.Parse (prop.Value);
 		}
 
+		[Obsolete]
 		protected override BuildResult OnCompileSources (ProjectItemCollection items, DotNetProjectConfiguration configuration, ConfigurationSelector configSelector, ProgressMonitor monitor)
 		{
 			return CSharpBindingCompilerManager.Compile (items, configuration, configSelector, monitor);

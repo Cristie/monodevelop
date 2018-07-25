@@ -28,6 +28,7 @@ using System;
 using MonoDevelop.Core;
 using MonoDevelop.Ide.Gui.Content;
 using MonoDevelop.Ide.Editor.Extension;
+using MonoDevelop.Ide.Editor;
 
 namespace MonoDevelop.Ide.CodeCompletion
 {
@@ -75,6 +76,10 @@ namespace MonoDevelop.Ide.CodeCompletion
 				if (wnd != null)
 					wnd.AutoCompleteEmptyMatch = wnd.AutoSelect = !IdeApp.Preferences.ForceSuggestionMode;
 			};
+			IdeApp.Preferences.EnableCompletionCategoryMode.Changed += (s, a) => {
+				if (wnd != null)
+					wnd.InCategoryMode = IdeApp.Preferences.EnableCompletionCategoryMode.Value;
+			};
 		}
 
 		// ext may be null, but then parameter completion don't work
@@ -84,14 +89,19 @@ namespace MonoDevelop.Ide.CodeCompletion
 			return ShowWindow (list, completionContext);
 		}
 
+		internal static void StartPrepareShowWindowSession ()
+		{
+			isShowing = true;
+		}
+
 		// ext may be null, but then parameter completion don't work
 		internal static void PrepareShowWindow (CompletionTextEditorExtension ext, char firstChar, ICompletionWidget completionWidget, CodeCompletionContext completionContext)
 		{
-			isShowing = true;
-
+			StartPrepareShowWindowSession ();
 			if (wnd == null) {
 				wnd = new CompletionListWindow ();
 				wnd.WordCompleted += HandleWndWordCompleted;
+				wnd.VisibleChanged += HandleWndVisibleChanged;
 			}
 			if (ext != null) {
 				var widget = ext.Editor.GetNativeWidget<Gtk.Widget> ();
@@ -116,7 +126,6 @@ namespace MonoDevelop.Ide.CodeCompletion
 			
 			var completionWidget = wnd.CompletionWidget;
 			var ext = wnd.Extension;
-			wnd.EndOffset = wnd.CompletionWidget.CaretOffset;
 			try {
 				isShowing = false;
 				if (!wnd.ShowListWindow (list, completionContext)) {
@@ -129,7 +138,7 @@ namespace MonoDevelop.Ide.CodeCompletion
 				if (IdeApp.Preferences.ForceSuggestionMode)
 					wnd.AutoSelect = false;
 				wnd.Show ();
-				OnWindowShown (EventArgs.Empty);
+				WindowShown?.Invoke (null, EventArgs.Empty);
 				return true;
 			} catch (Exception ex) {
 				LoggingService.LogError ("Exception while showing completion window.", ex);
@@ -139,11 +148,14 @@ namespace MonoDevelop.Ide.CodeCompletion
 			}
 		}
 
+		public static void ToggleCategoryMode ()
+		{
+			IdeApp.Preferences.EnableCompletionCategoryMode.Set (!IdeApp.Preferences.EnableCompletionCategoryMode.Value);
+		}
+
 		static void HandleWndWordCompleted (object sender, CodeCompletionContextEventArgs e)
 		{
-			EventHandler<CodeCompletionContextEventArgs> handler = WordCompleted;
-			if (handler != null)
-				handler (sender, e);
+			WordCompleted?.Invoke (sender, e);
 		}
 		
 		public static event EventHandler<CodeCompletionContextEventArgs> WordCompleted;
@@ -151,10 +163,13 @@ namespace MonoDevelop.Ide.CodeCompletion
 		static void DestroyWindow ()
 		{
 			if (wnd != null) {
+				if (wnd.Visible)
+					wnd.HideWindow ();
+				wnd.WordCompleted -= HandleWndWordCompleted;
+				wnd.VisibleChanged -= HandleWndVisibleChanged;
 				wnd.Destroy ();
 				wnd = null;
 			}
-			OnWindowClosed (EventArgs.Empty);
 		}
 		
 		public static bool PreProcessKeyEvent (KeyDescriptor descriptor)
@@ -164,15 +179,24 @@ namespace MonoDevelop.Ide.CodeCompletion
 			return wnd.PreProcessKeyEvent (descriptor);
 		}
 
+		static bool isInUpdate;
 		public static void UpdateCursorPosition ()
 		{
 			if (!IsVisible)
 				return;
-			if (wnd.IsInCompletion || isShowing)
+			if (wnd == null || wnd.IsInCompletion || isShowing || isInUpdate)
 				return;
-			var caretOffset = wnd.CompletionWidget.CaretOffset;
-			if (caretOffset < wnd.StartOffset || caretOffset > wnd.EndOffset + 1) {
-				HideWindow ();
+			isInUpdate = true;
+			try {
+				var widget = wnd.CompletionWidget;
+				if (widget == null)
+					return;
+				var caretOffset = widget.CaretOffset;
+				if (caretOffset < wnd.StartOffset || caretOffset > wnd.EndOffset + 1) {
+					HideWindow ();
+				}
+			} finally {
+				isInUpdate = false;
 			}
 		}
 
@@ -201,33 +225,21 @@ namespace MonoDevelop.Ide.CodeCompletion
 		public static void HideWindow ()
 		{
 			isShowing = false;
-			if (!IsVisible)
-				return;
-			if (wnd == null)
-				return;
-			ParameterInformationWindowManager.UpdateWindow (wnd.Extension, wnd.CompletionWidget);
-			wnd.HideWindow ();
-			OnWindowClosed (EventArgs.Empty);
-			//DestroyWindow ();
+			if (IsVisible) {
+				wnd.HideWindow ();
+			}
 		}
-		
-		
-		static void OnWindowClosed (EventArgs e)
+
+		static void HandleWndVisibleChanged (object sender, EventArgs args)
 		{
-			var handler = WindowClosed;
-			if (handler != null)
-				handler (null, e);
+			if (!wnd.Visible) {
+				isShowing = false;
+				ParameterInformationWindowManager.UpdateWindow (wnd.Extension, wnd.CompletionWidget);
+				WindowClosed?.Invoke (null, EventArgs.Empty);
+			}
 		}
 
 		public static event EventHandler WindowClosed;
-		
-		static void OnWindowShown (EventArgs e)
-		{
-			var handler = WindowShown;
-			if (handler != null)
-				handler (null, e);
-		}
-		
 		public static event EventHandler WindowShown;
 	}
 }

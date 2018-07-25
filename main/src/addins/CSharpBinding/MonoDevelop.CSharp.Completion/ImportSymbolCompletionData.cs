@@ -37,6 +37,7 @@ namespace MonoDevelop.CSharp.Completion
 	{
 		CSharpCompletionTextEditorExtension completionExt;
 		ISymbol type;
+		string displayText;//This is just for caching, because Sorting completion list can call DisplayText many times
 		bool useFullName;
 
 		public ISymbol Symbol { get { return type; } }
@@ -48,6 +49,14 @@ namespace MonoDevelop.CSharp.Completion
 		}
 		static CompletionItemRules rules = CompletionItemRules.Create (matchPriority: -10000);
         public override CompletionItemRules Rules => rules;
+		public override string DisplayText {
+			get {
+				if (displayText == null)
+					displayText = type.Name;
+				return displayText;
+			}
+		}
+		public override string CompletionText { get =>  useFullName ? type.ContainingNamespace.GetFullName () + "." + type.Name : type.Name; }
 
         public override int PriorityGroup { get { return int.MinValue; } }
 
@@ -122,22 +131,21 @@ namespace MonoDevelop.CSharp.Completion
 			ka |= KeyActions.Ignore;
 		}
 
-		static void AddGlobalNamespaceImport (MonoDevelop.Ide.Editor.TextEditor editor, DocumentContext context, string nsName)
+		static async void AddGlobalNamespaceImport (MonoDevelop.Ide.Editor.TextEditor editor, DocumentContext context, string nsName)
 		{
-			var parsedDocument = context.ParsedDocument;
-			var unit = parsedDocument.GetAst<SemanticModel> ();
+			var unit = await context.AnalysisDocument.GetSemanticModelAsync ();
 			if (unit == null)
 				return;
 
 			int offset = SearchUsingInsertionPoint (unit.SyntaxTree.GetRoot ());
 
-			var text = new StringBuilder ();
+			var text = StringBuilderCache.Allocate ();
 			text.Append ("using ");
 			text.Append (nsName);
 			text.Append (";");
 			text.Append (editor.EolMarker);
 
-			editor.InsertText (offset, text.ToString ());
+			editor.InsertText (offset, StringBuilderCache.ReturnAndFree (text));
 		}
 
 		static int SearchUsingInsertionPoint (SyntaxNode parent)

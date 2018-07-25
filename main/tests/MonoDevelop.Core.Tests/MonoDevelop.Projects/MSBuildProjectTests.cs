@@ -57,6 +57,56 @@ namespace MonoDevelop.Projects
 			return p;
 		}
 
+		class CustomLogger : MSBuildEngineLogger
+		{
+			internal Dictionary<string, int> loadTasks = new Dictionary<string, int> ();
+			internal Dictionary<string, int> evalTasks = new Dictionary<string, int> ();
+
+			static void IncValue (Dictionary<string, int> tasks, string project)
+			{
+				tasks.TryGetValue (project, out int count);
+				tasks [project] = ++count;
+			}
+
+			public override void LogMessage (string s)
+			{
+				Dictionary<string, int> tasks;
+
+				if (s.StartsWith ("Load Project:", StringComparison.Ordinal)) {
+					tasks = loadTasks;
+				} else if (s.StartsWith ("Evaluate Project:", StringComparison.Ordinal)) {
+					tasks = evalTasks;
+				} else
+					return;
+				
+				IncValue (tasks, s);
+			}
+		}
+
+		[Test]
+		public void ImportsLoadedAndEvaluatedOnlyOnce ()
+		{
+			try {
+				using (var p = LoadProject ()) {
+					CustomLogger log = null;
+
+					DefaultMSBuildEngine.GetEvaluationContext = proj => {
+						if (proj != p)
+							return null;
+						
+						log = new CustomLogger ();
+						return new MSBuildEvaluationContext { Log = log };
+					};
+
+					p.Evaluate ();
+					Assert.That (log.loadTasks.Values, Is.All.EqualTo (1));
+					Assert.That (log.evalTasks.Values, Is.All.EqualTo (1));
+				}
+			} finally {
+				DefaultMSBuildEngine.GetEvaluationContext = null;
+			}
+		}
+
 		[Test]
 		public void Properties ()
 		{
@@ -381,6 +431,14 @@ namespace MonoDevelop.Projects
 		}
 
 		[Test]
+		public void ConditionRelationalExpressions ()
+		{
+			var p = LoadAndEvaluate ("msbuild-tests", "condition-relational-expressions.targets");
+			Assert.AreEqual ("С2С3С4С7С10С12С14С17С18С20С23С24", p.EvaluatedProperties.GetValue("Answer"));
+			p.Dispose ();
+		}
+
+		[Test]
 		public void EvalItemsAfterProperties ()
 		{
 			var p = LoadAndEvaluate ("msbuild-tests", "property-eval-order.csproj");
@@ -423,6 +481,9 @@ namespace MonoDevelop.Projects
 
 			var dir = System.IO.Path.GetFullPath (System.IO.Path.Combine (System.IO.Path.GetDirectoryName (p.FileName), "foo"));
 			Assert.AreEqual (dir, p.EvaluatedProperties.GetValue ("FullPath"));
+
+			dir = System.IO.Path.GetFullPath (System.IO.Path.Combine (System.IO.Path.GetDirectoryName (p.FileName), "(some files)", "foo"));
+			Assert.AreEqual (dir, p.EvaluatedProperties.GetValue ("EscapedFullPath"));
 
 			Assert.AreEqual ("00065535.0", p.EvaluatedProperties.GetValue ("DoubleNumber"));
 			Assert.AreEqual ("56735", p.EvaluatedProperties.GetValue ("DoubleNumberComplex"));
@@ -1509,6 +1570,34 @@ namespace MonoDevelop.Projects
 		}
 
 		[Test]
+		public void ProjectHasNoMainPropertyGroup_AddRemoveProjectTypeGuid ()
+		{
+			string projectXml =
+				"<Project Sdk=\"Microsoft.NET.Sdk\">\r\n" +
+				"</Project>";
+
+			var p = new MSBuildProject ();
+			p.LoadXml (projectXml);
+
+			var projectTypeGuids = new string[] { "{test}" };
+			p.ProjectTypeGuids = projectTypeGuids;
+			Assert.AreEqual (projectTypeGuids, p.ProjectTypeGuids);
+
+			// Reload to ensure GlobalPropertyGroups is not available.
+			p.LoadXml (projectXml);
+
+			p.AddProjectTypeGuid ("{test}");
+			Assert.AreEqual (projectTypeGuids, p.ProjectTypeGuids);
+
+			// Reload to ensure GlobalPropertyGroups is not available.
+			p.LoadXml (projectXml);
+
+			p.AddProjectTypeGuid ("{test}");
+
+			p.Dispose ();
+		}
+
+		[Test]
 		public void GlobalPropertyProvider ()
 		{
 			var prov = new CustomGlobalPropertyProvider ("Works!");
@@ -1542,6 +1631,42 @@ namespace MonoDevelop.Projects
 			} finally {
 				MSBuildProjectService.UnregisterGlobalPropertyProvider (prov1);
 				MSBuildProjectService.UnregisterGlobalPropertyProvider (prov2);
+			}
+		}
+
+		/// <summary>
+		/// Tests that the MSBuildProject.Load method includes information about the file
+		/// being loaded when there was an error. This makes it easier to fix problems when
+		/// the project file or imported file fails to load in the IDE.
+		/// </summary>
+		[Test]
+		public void LoadInvalidXml_ExceptionContainsFileBeingLoaded ()
+		{
+			string directory = Util.CreateTmpDir ("MSBuildProjectLoadInvalidXml");
+			string fileName = Path.Combine (directory, "MSBuildProjectLoadInvalidXml.csproj");
+			File.WriteAllText (fileName, "<Project></Project>\n</Project>");
+			var p = new MSBuildProject ();
+			try {
+				p.Load (fileName);
+			} catch (Exception ex) {
+				Assert.That (ex.Message, Contains.Substring (fileName));
+			}
+		}
+
+		[Test]
+		public void EvaluateInvalidMSBuildImportXml_ExceptionContainsFileBeingLoaded ()
+		{
+			string directory = Util.CreateTmpDir ("MSBuildImportLoadInvalidXml");
+			string fileName = Path.Combine (directory, "MSBuildImportLoadInvalidXml.csproj");
+			File.WriteAllText (fileName, "<Project><Import Project='InvalidXmlImport.targets' /></Project>");
+			string importFileName = Path.Combine (directory, "InvalidXmlImport.targets");
+			File.WriteAllText (importFileName, "<Project></Project>\n</Project>");
+			var p = new MSBuildProject ();
+			p.Load (fileName);
+			try {
+				p.Evaluate ();
+			} catch (Exception ex) {
+				Assert.That (ex.Message, Contains.Substring (importFileName));
 			}
 		}
 	}

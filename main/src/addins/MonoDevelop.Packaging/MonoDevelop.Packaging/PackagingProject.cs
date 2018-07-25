@@ -50,7 +50,6 @@ namespace MonoDevelop.Packaging
 		public PackagingProject ()
 		{
 			UsePartialTypes = false;
-			RequiresMicrosoftBuild = true;
 		}
 
 		[ItemProperty ("PackageId")]
@@ -120,13 +119,6 @@ namespace MonoDevelop.Packaging
 		protected override bool OnGetCanExecute (Projects.ExecutionContext context, ConfigurationSelector configuration, SolutionItemRunConfiguration runConfiguration)
 		{
 			return false;
-		}
-
-		protected override void PopulateOutputFileList (
-			List<FilePath> list,
-			ConfigurationSelector configuration)
-		{
-			list.Add (OnGetOutputFileName (configuration));
 		}
 
 		protected override void OnPrepareForEvaluation (MSBuildProject project)

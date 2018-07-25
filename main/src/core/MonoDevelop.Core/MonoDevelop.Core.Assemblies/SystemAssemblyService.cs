@@ -29,16 +29,14 @@
 //
 
 using System;
-using System.IO;
 using System.Collections.Generic;
-using System.Diagnostics;
-using MonoDevelop.Core.AddIns;
-using Mono.Addins;
-using System.Reflection;
+using System.IO;
 using System.Linq;
-using System.Collections.Immutable;
+using System.Reflection;
 using System.Threading;
+using Mono.Addins;
 using Mono.Cecil;
+using MonoDevelop.Core.AddIns;
 
 namespace MonoDevelop.Core.Assemblies
 {
@@ -48,7 +46,6 @@ namespace MonoDevelop.Core.Assemblies
 		Dictionary<TargetFrameworkMoniker,TargetFramework> frameworks = new Dictionary<TargetFrameworkMoniker, TargetFramework> ();
 		List<TargetRuntime> runtimes;
 		TargetRuntime defaultRuntime;
-		DirectoryAssemblyContext userAssemblyContext = new DirectoryAssemblyContext ();
 
 		public TargetRuntime CurrentRuntime { get; private set; }
 
@@ -69,24 +66,13 @@ namespace MonoDevelop.Core.Assemblies
 
 			// Don't initialize until Current and Default Runtimes are set
 			foreach (TargetRuntime runtime in runtimes) {
-				runtime.Initialized += HandleRuntimeInitialized;
+				runtime.FrameworksInitialized += HandleRuntimeInitialized;
 			}
 
 			if (CurrentRuntime == null)
 				LoggingService.LogFatalError ("Could not create runtime info for current runtime");
 
 			CurrentRuntime.StartInitialization ();
-
-			LoadUserAssemblyContext ();
-			userAssemblyContext.Changed += delegate {
-				SaveUserAssemblyContext ();
-			};
-		}
-
-		void InitializeRuntime (TargetRuntime runtime)
-		{
-			runtime.Initialized += HandleRuntimeInitialized;
-			runtime.StartInitialization ();
 		}
 
 		void HandleRuntimeInitialized (object sender, EventArgs e)
@@ -129,9 +115,8 @@ namespace MonoDevelop.Core.Assemblies
 			}
 		}
 
-		public DirectoryAssemblyContext UserAssemblyContext {
-			get { return userAssemblyContext; }
-		}
+		[Obsolete ("Assembly folders are no longer supported")]
+		public DirectoryAssemblyContext UserAssemblyContext => new DirectoryAssemblyContext ();
 
 		public IAssemblyContext DefaultAssemblyContext {
 			get { return DefaultRuntime.AssemblyContext; }
@@ -139,10 +124,9 @@ namespace MonoDevelop.Core.Assemblies
 
 		public void RegisterRuntime (TargetRuntime runtime)
 		{
-			runtime.Initialized += HandleRuntimeInitialized;
+			runtime.FrameworksInitialized += HandleRuntimeInitialized;
 			runtimes.Add (runtime);
-			if (RuntimesChanged != null)
-				RuntimesChanged (this, EventArgs.Empty);
+			RuntimesChanged?.Invoke (this, EventArgs.Empty);
 		}
 
 		public void UnregisterRuntime (TargetRuntime runtime)
@@ -151,9 +135,8 @@ namespace MonoDevelop.Core.Assemblies
 				return;
 			DefaultRuntime = CurrentRuntime;
 			runtimes.Remove (runtime);
-			runtime.Initialized -= HandleRuntimeInitialized;
-			if (RuntimesChanged != null)
-				RuntimesChanged (this, EventArgs.Empty);
+			runtime.FrameworksInitialized -= HandleRuntimeInitialized;
+			RuntimesChanged?.Invoke (this, EventArgs.Empty);
 		}
 
 		internal IEnumerable<TargetFramework> GetKnownFrameworks ()
@@ -278,6 +261,77 @@ namespace MonoDevelop.Core.Assemblies
 			return AssemblyContext.NormalizeAsmName (GetAssemblyNameObj (file).ToString ());
 		}
 
+		public static bool IsManagedAssembly(string filePath)
+		{
+			try
+			{
+				using (Stream fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+				using (BinaryReader binaryReader = new BinaryReader(fileStream))
+				{
+					if (fileStream.Length < 64)
+					{
+						return false;
+					}
+
+					// PE Header starts @ 0x3C (60). Its a 4 byte header.
+					fileStream.Position = 0x3C;
+					uint peHeaderPointer = binaryReader.ReadUInt32();
+					if (peHeaderPointer == 0)
+					{
+						peHeaderPointer = 0x80;
+					}
+
+					// Ensure there is at least enough room for the following structures:
+					//     24 byte PE Signature & Header
+					//     28 byte Standard Fields         (24 bytes for PE32+)
+					//     68 byte NT Fields               (88 bytes for PE32+)
+					// >= 128 byte Data Dictionary Table
+					if (peHeaderPointer > fileStream.Length - 256)
+					{
+						return false;
+					}
+
+					// Check the PE signature.  Should equal 'PE\0\0'.
+					fileStream.Position = peHeaderPointer;
+					uint peHeaderSignature = binaryReader.ReadUInt32();
+					if (peHeaderSignature != 0x00004550)
+					{
+						return false;
+					}
+
+					// skip over the PEHeader fields
+					fileStream.Position += 20;
+
+					const ushort PE32 = 0x10b;
+					const ushort PE32Plus = 0x20b;
+
+					// Read PE magic number from Standard Fields to determine format.
+					var peFormat = binaryReader.ReadUInt16();
+					if (peFormat != PE32 && peFormat != PE32Plus)
+					{
+						return false;
+					}
+
+					// Read the 15th Data Dictionary RVA field which contains the CLI header RVA.
+					// When this is non-zero then the file contains CLI data otherwise not.
+					ushort dataDictionaryStart = (ushort)(peHeaderPointer + (peFormat == PE32 ? 232 : 248));
+					fileStream.Position = dataDictionaryStart;
+
+					uint cliHeaderRva = binaryReader.ReadUInt32();
+					if (cliHeaderRva == 0)
+					{
+						return false;
+					}
+
+					return true;
+				}
+			}
+			catch (Exception)
+			{
+				return false;
+			}
+		}
+
 		//warning: this may mutate `frameworks` and any newly-added TargetFrameworks in it
 		static void BuildFrameworkRelations (Dictionary<TargetFrameworkMoniker, TargetFramework> frameworks)
 		{
@@ -355,20 +409,6 @@ namespace MonoDevelop.Core.Assemblies
 			return TargetFrameworkMoniker.UNKNOWN;
 		}
 
-		void SaveUserAssemblyContext ()
-		{
-			List<string> list = new List<string> (userAssemblyContext.Directories);
-			PropertyService.Set ("MonoDevelop.Core.Assemblies.UserAssemblyContext", list);
-			PropertyService.SaveProperties ();
-		}
-
-		void LoadUserAssemblyContext ()
-		{
-			List<string> dirs = PropertyService.Get<List<string>> ("MonoDevelop.Core.Assemblies.UserAssemblyContext");
-			if (dirs != null)
-				userAssemblyContext.Directories = dirs;
-		}
-
 		/// <summary>
 		/// Simply get all assembly reference names from an assembly given it's file name.
 		/// </summary>
@@ -420,7 +460,38 @@ namespace MonoDevelop.Core.Assemblies
 			return false;
 		}
 
+		static Dictionary<string, bool> facadeReferenceDict = new Dictionary<string, bool> ();
+
+		static bool RequiresFacadeAssembliesInternal (string fileName)
+		{
+			bool result;
+			if (facadeReferenceDict.TryGetValue (fileName, out result))
+				return result;
+
+			AssemblyDefinition assembly = null;
+			try {
+				try {
+					assembly = Mono.Cecil.AssemblyDefinition.ReadAssembly (fileName);
+				} catch {
+					return false;
+				}
+				foreach (var r in assembly.MainModule.AssemblyReferences) {
+					// Don't compare the version number since it may change depending on the version of .net standard
+					if (r.Name.Equals ("System.Runtime") || r.Name.Equals ("netstandard")) {
+						facadeReferenceDict [fileName] = true; ;
+						return true;
+					}
+				}
+			} finally {
+				assembly?.Dispose ();
+			}
+			facadeReferenceDict [fileName] = false;
+			return false;
+		}
+
 		static object referenceLock = new object ();
+
+		[Obsolete ("Use RequiresFacadeAssemblies (string fileName)")]
 		public static bool ContainsReferenceToSystemRuntime (string fileName)
 		{
 			lock (referenceLock) {
@@ -429,11 +500,30 @@ namespace MonoDevelop.Core.Assemblies
 		}
 
 		static SemaphoreSlim referenceLockAsync = new SemaphoreSlim (1, 1);
+
+		[Obsolete ("Use RequiresFacadeAssembliesAsync (string fileName)")]
 		public static async System.Threading.Tasks.Task<bool> ContainsReferenceToSystemRuntimeAsync (string filename)
 		{
 			try {
 				await referenceLockAsync.WaitAsync ().ConfigureAwait (false);
 				return ContainsReferenceToSystemRuntimeInternal (filename);
+			} finally {
+				referenceLockAsync.Release ();
+			}
+		}
+
+		internal static bool RequiresFacadeAssemblies (string fileName)
+		{
+			lock (referenceLock) {
+				return RequiresFacadeAssembliesInternal (fileName);
+			}
+		}
+
+		internal static async System.Threading.Tasks.Task<bool> RequiresFacadeAssembliesAsync (string filename)
+		{
+			try {
+				await referenceLockAsync.WaitAsync ().ConfigureAwait (false);
+				return RequiresFacadeAssembliesInternal (filename);
 			} finally {
 				referenceLockAsync.Release ();
 			}
@@ -484,18 +574,10 @@ namespace MonoDevelop.Core.Assemblies
 			}
 		}
 
+		[Obsolete("Use Runtime.LoadAssemblyFrom")]
 		public Assembly LoadAssemblyFrom (string asmPath)
 		{
-			if (Environment.OSVersion.Platform == PlatformID.Win32NT) {
-				// MEF composition under Win32 requires that all assemblies be loaded in the
-				// Assembly.Load() context so use Assembly.Load() after getting the AssemblyName
-				// (which, on Win32, also contains the full path information so Assembly.Load()
-				// will work).
-				var asmName = AssemblyName.GetAssemblyName (asmPath);
-				return Assembly.Load (asmName);
-			}
-
-			return Assembly.LoadFrom (asmPath);
+			return Runtime.LoadAssemblyFrom (asmPath);
 		}
 	}
 }

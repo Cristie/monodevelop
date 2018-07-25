@@ -45,7 +45,7 @@ namespace MonoDevelop.CSharpBinding
 	[TestFixture]
 	class OnTheFlyFormatterTests : ICSharpCode.NRefactory6.TestBase
 	{
-		static async Task Simulate(string input, Action<TestViewContent, CSharpTextEditorIndentation> act, CSharpFormattingPolicy formattingPolicy = null)
+		static async Task Simulate(string input, Action<TestViewContent, CSharpTextEditorIndentation> act, CSharpFormattingPolicy formattingPolicy = null, EolMarker eolMarker = EolMarker.Unix)
 		{
 			TestWorkbenchWindow tww = new TestWorkbenchWindow();
 			var content = new TestViewContent();
@@ -106,7 +106,8 @@ namespace MonoDevelop.CSharpBinding
 			project.Name = "test";
 			project.FileName = "test.csproj";
 			project.Files.Add(new ProjectFile(content.ContentName, BuildAction.Compile));
-			var textStylePolicy = Projects.Policies.PolicyService.InvariantPolicies.Get<TextStylePolicy>().WithTabsToSpaces(true);
+			var textStylePolicy = Projects.Policies.PolicyService.InvariantPolicies.Get<TextStylePolicy>().WithTabsToSpaces(false)
+			                              .WithEolMarker(eolMarker);
 
 			project.Policies.Set(textStylePolicy, content.Data.MimeType);
 			project.Policies.Set(formattingPolicy  ?? Projects.Policies.PolicyService.InvariantPolicies.Get<CSharpFormattingPolicy>(), content.Data.MimeType);
@@ -130,10 +131,9 @@ namespace MonoDevelop.CSharpBinding
 			await doc.UpdateParseDocument ();
 			if (selectionStart >= 0 && selectionEnd >= 0)
 				content.GetTextEditorData ().SetSelection (selectionStart, selectionEnd);
-			try {
+
+			using (var testCase = new Ide.TextEditorExtensionTestCase (doc, content, tww, null, false)) {
 				act (content, ext);
-			} finally {
-				TypeSystemService.Unload (solution);
 			}
 		}
 
@@ -443,8 +443,8 @@ namespace FormatSelectionTest
     public class EmptyClass
     {
         public EmptyClass()
-        {
-        }
+		{
+		}
     }
 }", ext.Editor.Text);
 			});
@@ -627,7 +627,7 @@ namespace FormatSelectionTest
 
 				var newText = content.Text;
 				Assert.AreEqual("public class Application\r\n{\r\n\tstatic void Main (string[] args)\r\n\t{\r\n\t\t// abcd\r\n\t\t{\r\n\t\t}\r\n", newText);
-			});
+			}, eolMarker: EolMarker.Windows);
 		}
 
 		/// <summary>
@@ -639,10 +639,10 @@ namespace FormatSelectionTest
 			await Simulate (@"
 class EmptyClass
 {
-    public EmptyClass()
-    {
-        $Console.WriteLine() ;
-    }
+	public EmptyClass()
+	{
+		$Console.WriteLine() ;
+	}
 }", (content, ext) => { 
 				var oldOffset = ext.Editor.CaretOffset;
 				OnTheFlyFormatter.Format (ext.Editor, ext.DocumentContext);
@@ -664,10 +664,10 @@ using System;
 
 class MyContext
 {
-    public static void Main()
-    {
-        Console.WriteLine   $   (""Hello world!"");
-    }
+	public static void Main()
+	{
+		Console.WriteLine   $   (""Hello world!"");
+	}
 }", (content, ext) => {
 				var oldOffset = ext.Editor.CaretOffset;
 				OnTheFlyFormatter.Format (ext.Editor, ext.DocumentContext);
@@ -709,5 +709,33 @@ class MyContext
 }", content.Text);
 			}, policy);
 		}
+
+
+		/// <summary>
+		/// Bug 514890 - [Feedback] #region indentation changes when #if added to C# source file (VS 7.2 build 636).
+		/// </summary>
+		[Test]
+		public async Task TestBug514890 ()
+		{
+			var text = @"using System;
+namespace TestConsole
+{
+#if
+    public class Test
+    {
+        #region foo
+        public Test()
+        {
+        }
+        #endregion
+    }
+}
+";
+			await Simulate (text, (content, ext) => { 
+				OnTheFlyFormatter.Format (ext.Editor, ext.DocumentContext, 39, 41);
+				Assert.AreEqual (text, content.Text);
+			});
+
+		} 
 	}
 }

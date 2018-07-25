@@ -56,7 +56,7 @@ namespace MonoDevelop.SourceEditor
 	class ExtensibleTextEditor : Mono.TextEditor.MonoTextEditor
 	{
 		internal object MemoryProbe = Counters.EditorsInMemory.CreateMemoryProbe ();
-		
+
 		SourceEditorView view;
 		Adjustment cachedHAdjustment, cachedVAdjustment;
 		
@@ -209,6 +209,7 @@ namespace MonoDevelop.SourceEditor
 		{
 			IsDestroyed = true;
 			UnregisterAdjustments ();
+
 			view = null;
 			Document.SyntaxMode = null;
 			base.OnDestroyed ();
@@ -334,7 +335,6 @@ namespace MonoDevelop.SourceEditor
 			}
 		}
 
-
 		protected internal override bool OnIMProcessedKeyPressEvent (Gdk.Key key, uint ch, Gdk.ModifierType state)
 		{
 			bool result = true;
@@ -423,7 +423,7 @@ namespace MonoDevelop.SourceEditor
 				if (sb != null)
 					sb.AppendLine();
 				else
-					sb = new StringBuilder();
+					sb = StringBuilderCache.Allocate();
 
 				if (error.Error.ErrorType == MonoDevelop.Ide.TypeSystem.ErrorType.Warning)
 					sb.Append(GettextCatalog.GetString("<b>Warning</b>: {0}",
@@ -433,7 +433,7 @@ namespace MonoDevelop.SourceEditor
 						GLib.Markup.EscapeText(error.Error.Message)));
 			}
 
-			return sb?.ToString();
+			return sb != null ? StringBuilderCache.ReturnAndFree (sb) : null;
 		}
 
 		public MonoDevelop.Projects.Project Project {
@@ -676,18 +676,37 @@ namespace MonoDevelop.SourceEditor
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.DeletePrevSubword)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.DeletePrevWord)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.DeleteRightChar)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.DeleteToLineEnd)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.DeleteToLineStart)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.DocumentEnd)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.DocumentStart)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.DuplicateLine)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.ExpandSelection)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.ExpandSelectionToLine)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.GotoMatchingBrace)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.InsertNewLine)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.InsertNewLineAtEnd)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.InsertNewLinePreserveCaretPosition)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.InsertTab)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.LineDown)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.LineEnd)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.LineStart)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.LineUp)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.MoveBlockDown)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.MoveBlockUp)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.MoveNextSubword)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.MoveNextWord)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.MovePrevSubword)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.MovePrevWord)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.PageDown)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.PageUp)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.RemoveTab)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.ScrollBottom)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.ScrollLineDown)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.ScrollLineUp)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.ScrollPageDown)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.ScrollPageUp)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.ScrollTop)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.SelectionMoveDown)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.SelectionMoveEnd)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.SelectionMoveHome)]
@@ -700,7 +719,11 @@ namespace MonoDevelop.SourceEditor
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.SelectionMoveToDocumentEnd)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.SelectionMoveToDocumentStart)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.SelectionMoveUp)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.SelectionPageDownAction)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.SelectionPageUpAction)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.ShrinkSelection)]
 		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.SwitchCaretMode)]
+		[CommandUpdateHandler (MonoDevelop.Ide.Commands.TextEditorCommands.TransposeCharacters)]
 		protected void OnUpdateEditorCommand (CommandInfo info)
 		{
 			// ignore command if the editor has no focus
@@ -848,27 +871,27 @@ namespace MonoDevelop.SourceEditor
 		[CommandHandler (MonoDevelop.Ide.Commands.TextEditorCommands.MovePrevWord)]
 		internal void OnMovePrevWord ()
 		{
-			RunAction (CaretMoveActions.PreviousWord);
+			EditorOperations.MoveToPreviousWord (false);
 		}
 
 		[CommandHandler (MonoDevelop.Ide.Commands.TextEditorCommands.MoveNextWord)]
 		internal void OnMoveNextWord ()
 		{
-			RunAction (CaretMoveActions.NextWord);
+			EditorOperations.MoveToNextWord (false);
 		}
 
 		[CommandHandler (MonoDevelop.Ide.Commands.TextEditorCommands.SelectionMovePrevWord)]
 		internal void OnSelectionMovePrevWord ()
 		{
-			RunAction (SelectionActions.MovePreviousWord);
+			EditorOperations.MoveToPreviousWord (true);
 		}
 
 		[CommandHandler (MonoDevelop.Ide.Commands.TextEditorCommands.SelectionMoveNextWord)]
 		internal void OnSelectionMoveNextWord ()
 		{
-			RunAction (SelectionActions.MoveNextWord);
+			EditorOperations.MoveToNextWord (true);
 		}
-		
+
 		[CommandHandler (MonoDevelop.Ide.Commands.TextEditorCommands.MovePrevSubword)]
 		internal void OnMovePrevSubword ()
 		{

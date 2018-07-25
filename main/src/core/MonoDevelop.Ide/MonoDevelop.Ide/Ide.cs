@@ -49,6 +49,8 @@ using MonoDevelop.Ide.TypeSystem;
 using MonoDevelop.Ide.Extensions;
 using MonoDevelop.Ide.Templates;
 using System.Threading.Tasks;
+using MonoDevelop.Ide.RoslynServices.Options;
+using MonoDevelop.Ide.RoslynServices;
 
 namespace MonoDevelop.Ide
 {
@@ -61,7 +63,7 @@ namespace MonoDevelop.Ide
 		static CommandManager commandService;
 		static IdeServices ideServices;
 		static RootWorkspace workspace;
-		static IdePreferences preferences;
+		readonly static IdePreferences preferences;
 
 		public const int CurrentRevision = 5;
 
@@ -86,6 +88,24 @@ namespace MonoDevelop.Ide
 					initializedEvent -= value;
 				});
 			}
+		}
+
+		static EventHandler startupCompleted;
+		public static event EventHandler StartupCompleted {
+			add {
+				Runtime.RunInMainThread (() => {
+					startupCompleted += value;
+				});
+			}
+			remove {
+				Runtime.RunInMainThread (() => {
+					startupCompleted -= value;
+				});
+			}
+		}
+		internal static void OnStartupCompleted ()
+		{
+			startupCompleted?.Invoke (null, EventArgs.Empty);
 		}
 
 		internal static IdeCustomizer Customizer { get; set; }
@@ -142,9 +162,7 @@ namespace MonoDevelop.Ide
 			get { return ideServices; }
 		}
 
-		public static IdePreferences Preferences {
-			get { return preferences; }
-		}
+		public static IdePreferences Preferences => preferences;
 
 		public static bool IsInitialized {
 			get {
@@ -172,7 +190,21 @@ namespace MonoDevelop.Ide
 				return Runtime.Version;
 			}
 		}
-		
+
+		// This flag tells us whether or not the solution being loaded was from the file manager.
+		static bool reportTimeToCode;
+		static bool fmTimeoutExpired;
+		public static bool ReportTimeToCode {
+			get => reportTimeToCode && !fmTimeoutExpired;
+			set {
+				reportTimeToCode = value;
+				if (fmTimeoutId > 0) {
+					GLib.Source.Remove (fmTimeoutId);
+					fmTimeoutId = 0;
+				}
+			}
+		}
+
 		public static void Initialize (ProgressMonitor monitor)
 		{
 			// Already done in IdeSetup, but called again since unit tests don't use IdeSetup.
@@ -315,9 +347,31 @@ namespace MonoDevelop.Ide
 		{
 			Ide.IdeApp.Workbench.StatusBar.ShowWarning (e.Message);
 		}
-		
+
+		static readonly uint fmTimeoutMs = 2500;
+		static uint fmTimeoutId;
+		internal static void StartFMOpenTimer (Action timeCompletion)
+		{
+			// We only track time to code if the reportTimeToCode flag is set within fmTimeoutMs from this method being called
+			fmTimeoutId = GLib.Timeout.Add (fmTimeoutMs, () => FMOpenTimerExpired (timeCompletion));
+		}
+
+		static bool FMOpenTimerExpired (Action timeCompletion)
+		{
+			fmTimeoutExpired = true;
+			fmTimeoutId = 0;
+			timeCompletion ();
+			return false;
+		}
+
 		//this method is MIT/X11, 2009, Michael Hutchinson / (c) Novell
-		public static async void OpenFiles (IEnumerable<FileOpenInformation> files)
+		public static void OpenFiles (IEnumerable<FileOpenInformation> files)
+		{
+			OpenFiles (files, null);
+		}
+
+		//this method is MIT/X11, 2009, Michael Hutchinson / (c) Novell
+		internal static async void OpenFiles (IEnumerable<FileOpenInformation> files, OpenWorkspaceItemMetadata metadata)
 		{
 			if (!files.Any ())
 				return;
@@ -326,14 +380,18 @@ namespace MonoDevelop.Ide
 				EventHandler onInit = null;
 				onInit = delegate {
 					Initialized -= onInit;
-					OpenFiles (files);
+					OpenFiles (files, metadata);
 				};
 				Initialized += onInit;
 				return;
 			}
 			
 			var filteredFiles = new List<FileOpenInformation> ();
-			bool closeCurrent = true;
+
+			Gdk.ModifierType mtype = Components.GtkWorkarounds.GetCurrentKeyModifiers ();
+			bool closeCurrent = !mtype.HasFlag (Gdk.ModifierType.ControlMask);
+			if (Platform.IsMac && closeCurrent)
+				closeCurrent = !mtype.HasFlag (Gdk.ModifierType.Mod2Mask);
 
 			foreach (var file in files) {
 				if (Services.ProjectService.IsWorkspaceItemFile (file.FileName) ||
@@ -341,7 +399,7 @@ namespace MonoDevelop.Ide
 					try {
 						// Close the current solution, but only for the first solution we open.
 						// If more than one solution is specified in the list we want to open all them together.
-						await Workspace.OpenWorkspaceItem (file.FileName, closeCurrent);
+						await Workspace.OpenWorkspaceItem (file.FileName, closeCurrent, true, metadata);
 						closeCurrent = false;
 					} catch (Exception ex) {
 						MessageService.ShowError (GettextCatalog.GetString ("Could not load solution: {0}", file.FileName), ex);
@@ -528,13 +586,22 @@ namespace MonoDevelop.Ide
 				DispatchIdleActions (500);
 		}
 
-		
+
 		internal static bool OnExit ()
 		{
-			if (Exiting != null) {
-				ExitEventArgs args = new ExitEventArgs ();
-				Exiting (null, args);
-				return !args.Cancel;
+			var exiting = Exiting;
+			if (exiting != null) {
+				bool haveAnyCancelled = false;
+				var args = new ExitEventArgs ();
+				foreach (ExitEventHandler handler in exiting.GetInvocationList ()) {
+					try {
+						handler (null, args);
+						haveAnyCancelled |= args.Cancel;
+					} catch (Exception ex) {
+						LoggingService.LogError ("Exception processing IdeApp.Exiting handler.", ex);
+					}
+				}
+				return !haveAnyCancelled;
 			}
 			return true;
 		}
@@ -607,14 +674,16 @@ namespace MonoDevelop.Ide
 	
 	public class IdeServices
 	{
-		readonly TemplatingService templatingService = new TemplatingService ();
+		readonly Lazy<TemplatingService> templatingService = new Lazy<TemplatingService> (() => new TemplatingService ());
 
 		public ProjectService ProjectService {
 			get { return MonoDevelop.Projects.Services.ProjectService; }
 		}
 
 		public TemplatingService TemplatingService {
-			get { return templatingService; }
+			get { return templatingService.Value; }
 		}
+
+		internal RoslynService RoslynService { get; } = new RoslynService ();
 	}
 }

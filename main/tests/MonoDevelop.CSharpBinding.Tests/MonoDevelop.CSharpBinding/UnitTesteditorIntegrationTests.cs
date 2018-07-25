@@ -38,16 +38,24 @@ using MonoDevelop.Core.ProgressMonitoring;
 using MonoDevelop.Core;
 using System.Threading.Tasks;
 using MonoDevelop.UnitTesting;
+using MonoDevelop.Ide.Editor.Extension;
 
 namespace MonoDevelop.CSharpBinding.Tests
 {
 	[TestFixture]
-	public class UnitTesteditorIntegrationTests : UnitTests.TestBase
+	class UnitTesteditorIntegrationTests : Ide.TextEditorExtensionTestBase
 	{
-		class UnitTestMarkers: IUnitTestMarkers
+		protected override EditorExtensionTestData GetContentData () => EditorExtensionTestData.CSharpWithReferences;
+		protected override IEnumerable<TextEditorExtension> GetEditorExtensions ()
+		{
+			yield return new UnitTestTextEditorExtension ();
+		}
+
+		class UnitTestMarkers: IUnitTestMarkers2
 		{
 			public string TestMethodAttributeMarker { get; set; }
 			public string TestCaseMethodAttributeMarker { get; set; }
+			public string TestCaseSourceAttributeMarker { get; set; }
 			public string IgnoreTestMethodAttributeMarker { get; set; }
 			public string IgnoreTestClassAttributeMarker { get; set; }
 		}
@@ -56,87 +64,64 @@ namespace MonoDevelop.CSharpBinding.Tests
 			new UnitTestMarkers {
 				TestMethodAttributeMarker = "NUnit.Framework.TestAttribute",
 				TestCaseMethodAttributeMarker = "NUnit.Framework.TestCaseAttribute",
+				TestCaseSourceAttributeMarker = "NUnit.Framework.TestCaseSourceAttribute",
 				IgnoreTestMethodAttributeMarker = "NUnit.Framework.IgnoreAttribute",
 				IgnoreTestClassAttributeMarker = "NUnit.Framework.IgnoreAttribute"
 			}
 		};
 
-		static async Task<UnitTestTextEditorExtension> Setup (string input)
+		async Task Setup (string input, Func<UnitTestTextEditorExtension, Task> test)
 		{
-			var tww = new TestWorkbenchWindow ();
-			var content = new TestViewContent ();
-			tww.ViewContent = content;
-			content.ContentName = "/a.cs";
-			content.Data.MimeType = "text/x-csharp";
-			MonoDevelop.AnalysisCore.AnalysisOptions.EnableUnitTestEditorIntegration.Set (true);
-			var doc = new Document (tww);
-
 			var text = @"namespace NUnit.Framework {
 	public class TestFixtureAttribute : System.Attribute {} 
 	public class TestAttribute : System.Attribute {} 
-} namespace TestNs { " + input +"}";
+	public class TestCaseSourceAttribute : System.Attribute {} 
+} namespace TestNs { " + input + "}";
 			int endPos = text.IndexOf ('$');
 			if (endPos >= 0)
 				text = text.Substring (0, endPos) + text.Substring (endPos + 1);
 
-			content.Text = text;
-			content.CursorPosition = System.Math.Max (0, endPos);
+			AnalysisCore.AnalysisOptions.EnableUnitTestEditorIntegration.Set (true);
 
-			var project = MonoDevelop.Ide.Services.ProjectService.CreateDotNetProject ("C#");
-			project.Name = "test";
-			project.FileName = "test.csproj";
-			project.Files.Add (new ProjectFile ("/a.cs", BuildAction.Compile)); 
+			using (var testCase = await SetupTestCase (text, Math.Max (0, endPos))) {
+				var doc = testCase.Document;
+				await doc.UpdateParseDocument ();
 
-			var solution = new Solution ();
-			solution.AddConfiguration ("", true); 
-			solution.DefaultSolutionFolder.AddItem (project);
-			using (var monitor = new ProgressMonitor ())
-				await TypeSystemService.Load (solution, monitor);
-			content.Project = project;
-			doc.SetProject (project);
-
-			var compExt = new UnitTestTextEditorExtension ();
-			compExt.Initialize (doc.Editor, doc);
-			content.Contents.Add (compExt);
-			await doc.UpdateParseDocument ();
-			TypeSystemService.Unload (solution);
-			return compExt;
-		}
-
-		protected override void InternalSetup (string rootDir)
-		{
-			base.InternalSetup (rootDir);
-			IdeApp.Initialize (new ProgressMonitor ()); 
+				var compExt = doc.GetContent<UnitTestTextEditorExtension> ();
+				await test (compExt);
+			}
 		}
 
 		[Test]
 		public async Task TestSimple ()
 		{
-			var ext = await Setup (@"using NUnit.Framework;
+			await Setup (@"using NUnit.Framework;
 [TestFixture]
 class TestClass
 {
 	[Test]
 	public void MyTest () {}
 }
-");
-			var tests = await ext.GatherUnitTests (unitTestMarkers, default(CancellationToken));
-			Assert.IsNotNull (tests);
-			Assert.AreEqual (2, tests.Count);
+", async ext => {
+				var tests = await ext.GatherUnitTests (unitTestMarkers, default (CancellationToken));
+				Assert.IsNotNull (tests);
+				Assert.AreEqual (2, tests.Count);
+			});
 		}
 
 		[Test]
 		public async Task TestNoTests ()
 		{
-			var ext = await Setup (@"using NUnit.Framework;
+			await Setup (@"using NUnit.Framework;
 class TestClass
 {
 	public void MyTest () {}
 }
-");
-			var tests = await ext.GatherUnitTests (unitTestMarkers, default(CancellationToken));
-			Assert.IsNotNull (tests);
-			Assert.AreEqual (0, tests.Count);
+", async ext => {
+				var tests = await ext.GatherUnitTests (unitTestMarkers, default (CancellationToken));
+				Assert.IsNotNull (tests);
+				Assert.AreEqual (0, tests.Count);
+			});
 		}
 
 
@@ -147,7 +132,7 @@ class TestClass
 		[Test]
 		public async Task TestBug14522 ()
 		{
-			var ext = await Setup (@"using NUnit.Framework;
+			await Setup (@"using NUnit.Framework;
 [TestFixture]
 abstract class MyBase
 {
@@ -158,13 +143,14 @@ public class Derived : MyBase
 	[Test]
 	public void MyTest () {}
 }
-");
-			var tests = await ext.GatherUnitTests (unitTestMarkers, default(CancellationToken));
-			Assert.IsNotNull (tests);
-			Assert.AreEqual (2, tests.Count);
+", async ext => {
+				var tests = await ext.GatherUnitTests (unitTestMarkers, default (CancellationToken));
+				Assert.IsNotNull (tests);
+				Assert.AreEqual (2, tests.Count);
 
-			Assert.AreEqual ("TestNs.Derived", tests [0].UnitTestIdentifier);
-			Assert.AreEqual ("TestNs.Derived.MyTest", tests [1].UnitTestIdentifier);
+				Assert.AreEqual ("TestNs.Derived", tests [0].UnitTestIdentifier);
+				Assert.AreEqual ("TestNs.Derived.MyTest", tests [1].UnitTestIdentifier);
+			});
 		}
 
 
@@ -174,18 +160,47 @@ public class Derived : MyBase
 		[Test]
 		public async Task TestBug19651 ()
 		{
-			var ext = await Setup (@"using NUnit.Framework;
+			await Setup (@"using NUnit.Framework;
 class TestClass
 {
 	[Test]
 	public void MyTest () {}
 }
-");
-			var tests = await ext.GatherUnitTests (unitTestMarkers, default(CancellationToken));
-			Assert.IsNotNull (tests);
-			Assert.AreEqual (2, tests.Count);
+", async ext => {
+				var tests = await ext.GatherUnitTests (unitTestMarkers, default (CancellationToken));
+				Assert.IsNotNull (tests);
+				Assert.AreEqual (2, tests.Count);
+			});
 		}
 
+		/// <summary>
+		/// Issue #3869 "[TestCaseSource ("xzy")]" isn't seen as a test in the text editor. No dot next to it. 
+		/// </summary>
+		[Test]
+		public async Task TestIssue3869 ()
+		{
+			await Setup (@"using NUnit.Framework;
+class TestClass
+{
+	[TestCaseSource(""DivideCases"")]
+    public void DivideTest(int n, int d, int q)
+    {
+        Assert.AreEqual(q, n / d);
+    }
+
+    static object[] DivideCases =
+    {
+        new object[] { 12, 3, 4 },
+        new object[] { 12, 2, 6 },
+        new object[] { 12, 4, 3 }
+    };
+}
+", async ext => {
+				var tests = await ext.GatherUnitTests (unitTestMarkers, default (CancellationToken));
+				Assert.IsNotNull (tests);
+				Assert.AreEqual (2, tests.Count);
+			});
+		}
 	}
 }
 

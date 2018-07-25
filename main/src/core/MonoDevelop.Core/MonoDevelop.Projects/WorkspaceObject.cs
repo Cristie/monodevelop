@@ -37,7 +37,6 @@ using System.Threading.Tasks;
 using System.Runtime.Remoting.Messaging;
 using MonoDevelop.Core.StringParsing;
 using System.Threading;
-using System.Collections.Immutable;
 using MonoDevelop.Core.AddIns;
 
 
@@ -386,17 +385,17 @@ namespace MonoDevelop.Projects
 				}
 			}
 
-			foreach (var e in tempExtensions)
-				e.Dispose ();
+			extensionChain.Dispose ();
 
 			// Now create the final extension chain
 
 			extensions.Reverse ();
 			var defaultExts = CreateDefaultExtensions ().ToList ();
 			defaultExts.Reverse ();
-			extensionChain.SetDefaultInsertionPosition (defaultExts.FirstOrDefault ());
 			extensions.AddRange (defaultExts);
 			extensionChain = ExtensionChain.Create (extensions.ToArray ());
+			extensionChain.SetDefaultInsertionPosition (defaultExts.FirstOrDefault ());
+
 			foreach (var e in extensions)
 				e.Init (this);
 			
@@ -469,50 +468,52 @@ namespace MonoDevelop.Projects
 			var allExtensions = extensionChain.GetAllExtensions ().OfType<WorkspaceObjectExtension> ().ToList ();
 			var loadedNodes = allExtensions.Where (ex => ex.SourceExtensionNode != null)
 				.Select (ex => ex.SourceExtensionNode.Id).ToList ();
-			var newExtensions = ImmutableList<WorkspaceObjectExtension>.Empty;
+			var newExtensions = new List <WorkspaceObjectExtension> ();
 
 			ProjectModelExtensionNode lastAddedNode = null;
 
 			// Ensure conditions are re-evaluated.
 			extensionContext = CreateExtensionContext (this);
 
-			foreach (ProjectModelExtensionNode node in GetModelExtensions (extensionContext)) {
-				// If the node already generated an extension, skip it
-				if (loadedNodes.Contains (node.Id)) {
-					lastAddedNode = node;
-					loadedNodes.Remove (node.Id);
-					continue;
-				}
+			using (extensionChain.BatchModify ()) {
+				foreach (ProjectModelExtensionNode node in GetModelExtensions (extensionContext)) {
+					// If the node already generated an extension, skip it
+					if (loadedNodes.Contains (node.Id)) {
+						lastAddedNode = node;
+						loadedNodes.Remove (node.Id);
+						continue;
+					}
 
-				// Maybe the node can now generate an extension for this project
-				if (node.CanHandleObject (this)) {
-					var ext = node.CreateExtension ();
-					if (ext.SupportsObject (this)) {
-						ext.SourceExtensionNode = node;
-						newExtensions = newExtensions.Add (ext);
-						if (lastAddedNode != null) {
-							// There is an extension before this one. Find it and add the new extension after it.
-							var prevExtension = allExtensions.FirstOrDefault (ex => ex.SourceExtensionNode?.Id == lastAddedNode.Id);
-							extensionChain.AddExtension (ext, prevExtension);
-						} else
-							extensionChain.AddExtension (ext);
-						ext.Init (this);
+					// Maybe the node can now generate an extension for this project
+					if (node.CanHandleObject (this)) {
+						var ext = node.CreateExtension ();
+						if (ext.SupportsObject (this)) {
+							ext.SourceExtensionNode = node;
+							newExtensions.Add (ext);
+							if (lastAddedNode != null) {
+								// There is an extension before this one. Find it and add the new extension after it.
+								var prevExtension = allExtensions.FirstOrDefault (ex => ex.SourceExtensionNode?.Id == lastAddedNode.Id);
+								extensionChain.AddExtension (ext, prevExtension);
+							} else
+								extensionChain.AddExtension (ext);
+							ext.Init (this);
+						}
 					}
 				}
-			}
 
-			// Now dispose extensions that are not supported anymore
+				// Now dispose extensions that are not supported anymore
 
-			foreach (var ext in allExtensions) {
-				if (!ext.SupportsObject (this))
-					ext.Dispose ();
-			}
-
-			if (loadedNodes.Any ()) {
-				foreach (var ext in allExtensions.Where (ex => ex.SourceExtensionNode != null)) {
-					if (loadedNodes.Contains (ext.SourceExtensionNode.Id)) {
+				foreach (var ext in allExtensions) {
+					if (!ext.SupportsObject (this))
 						ext.Dispose ();
-						loadedNodes.Remove (ext.SourceExtensionNode.Id);
+				}
+
+				if (loadedNodes.Any ()) {
+					foreach (var ext in allExtensions.Where (ex => ex.SourceExtensionNode != null)) {
+						if (loadedNodes.Contains (ext.SourceExtensionNode.Id)) {
+							ext.Dispose ();
+							loadedNodes.Remove (ext.SourceExtensionNode.Id);
+						}
 					}
 				}
 			}

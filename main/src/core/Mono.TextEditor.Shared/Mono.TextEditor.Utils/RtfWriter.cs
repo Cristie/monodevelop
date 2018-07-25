@@ -28,7 +28,8 @@ using System.Text;
 using System.Collections.Generic;
 using Mono.TextEditor.Highlighting;
 using MonoDevelop.Core.Text;
-using MonoDevelop.Ide.Editor.Highlighting;
+using MonoDevelop.Ide;
+using MonoDevelop.Core;
 
 namespace Mono.TextEditor.Utils
 {
@@ -36,7 +37,7 @@ namespace Mono.TextEditor.Utils
 	{
 		static string CreateColorTable (List<Cairo.Color> colorList)
 		{
-			var colorTable = new StringBuilder ();
+			var colorTable = StringBuilderCache.Allocate ();
 			colorTable.Append (@"{\colortbl ;");
 			for (int i = 0; i < colorList.Count; i++) {
 				var color = colorList [i];
@@ -49,12 +50,12 @@ namespace Mono.TextEditor.Utils
 				colorTable.Append (";");
 			}
 			colorTable.Append ("}");
-			return colorTable.ToString ();
+			return StringBuilderCache.ReturnAndFree (colorTable);
 		}
 
 		public static string GenerateRtf (TextEditorData data)
 		{
-			return GenerateRtf (ClipboardColoredText.GetChunks (data, new TextSegment (0, data.Length)), data.ColorStyle, data.Options);
+			return GenerateRtf (ClipboardColoredText.GetChunks (data, new TextSegment (0, data.Length)).WaitAndGetResult (default (System.Threading.CancellationToken)), data.ColorStyle, data.Options);
 		}
 
 		static void AppendRtfText (StringBuilder rtfText, string text, ref bool appendSpace)
@@ -97,7 +98,7 @@ namespace Mono.TextEditor.Utils
 
 		internal static string GenerateRtf (List<List<ClipboardColoredText>> chunks, MonoDevelop.Ide.Editor.Highlighting.EditorTheme style, ITextEditorOptions options)
 		{
-			var rtfText = new StringBuilder ();
+			var rtfText = StringBuilderCache.Allocate ();
 			var colorList = new List<Cairo.Color> ();
 
 			bool isItalic = false;
@@ -131,7 +132,7 @@ namespace Mono.TextEditor.Utils
 				rtfText.AppendLine (@"\line");
 			}
 			
-			var rtf = new StringBuilder();
+			var rtf = StringBuilderCache.Allocate ();
 
 			rtf.AppendLine (@"{\rtf1\ansi\deff0\adeflang1025");
 			rtf.AppendLine (@"{\fonttbl");
@@ -147,9 +148,9 @@ namespace Mono.TextEditor.Utils
 				rtf.Append (fontSize);
 			} catch (Exception) {};
 			rtf.AppendLine (@"\cf1");
-			rtf.Append (rtfText.ToString ());
+			rtf.Append (StringBuilderCache.ReturnAndFree (rtfText));
 			rtf.Append("}");
-			return rtf.ToString ();
+			return StringBuilderCache.ReturnAndFree (rtf);
 		}
 	}
 }

@@ -30,6 +30,7 @@ using MonoDevelop.Core.Text;
 using MonoDevelop.Ide.Gui;
 using MonoDevelop.Ide.TypeSystem;
 using System.Threading.Tasks;
+using MonoDevelop.Core;
 
 namespace MonoDevelop.Ide.Editor.Projection
 {
@@ -98,10 +99,10 @@ namespace MonoDevelop.Ide.Editor.Projection
 
 		public override void ReparseDocument ()
 		{
-			ReparseDocumentInternal ();
+			ReparseDocumentInternal ().Ignore ();
 		}
 
-		Task ReparseDocumentInternal ()
+		async Task ReparseDocumentInternal ()
 		{
 			var options = new ParseOptions {
 				FileName = projectedEditor.FileName,
@@ -110,8 +111,9 @@ namespace MonoDevelop.Ide.Editor.Projection
 				RoslynDocument = projectedDocument,
 				OldParsedDocument = parsedDocument
 			}; 
-			return TypeSystemService.ParseFile (options, projectedEditor.MimeType).ContinueWith (t => {
-				parsedDocument = t.Result;
+			var result = await TypeSystemService.ParseFile (options, projectedEditor.MimeType).ConfigureAwait (false);
+			await Runtime.RunInMainThread (delegate {
+				parsedDocument = result;
 				base.OnDocumentParsed (EventArgs.Empty);
 			});
 		}

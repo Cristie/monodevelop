@@ -253,6 +253,16 @@ namespace MonoDevelop.UnitTesting
 							menuItem.Clicked += new TestRunner (unitTest.UnitTestIdentifier + id, project, true).Select;
 							submenu.Add (menuItem);
 
+							const int maxLabelLength = 80;
+							var trimmedLabel = label.Trim ();
+							if (trimmedLabel.Length > maxLabelLength) {
+								const char gap = '\u2026';
+								int remainsLength = (maxLabelLength - 1) / 2;
+								string start = trimmedLabel.Substring (0, remainsLength);
+								string end = trimmedLabel.Substring (trimmedLabel.Length - remainsLength, remainsLength);
+								label = $"{start.TrimEnd()}{gap}{end.TrimStart ()}";
+							}
+
 							var subMenuItem = new ContextMenuItem (label);
 							// if (!string.IsNullOrEmpty (tooltip))
 							//	subMenuItem.TooltipText = tooltip;
@@ -261,7 +271,8 @@ namespace MonoDevelop.UnitTesting
 						}
 					}
 				}
-				menu.Show (ext.Editor, x, y);
+				// FIXME: enforce public API by casting Control to Gtk.Widget, because of IVT
+				menu.Show ((Gtk.Widget)ext.Editor, x, y);
 			}
 
 			#endregion
@@ -303,12 +314,18 @@ namespace MonoDevelop.UnitTesting
 						return;
 					}
 
-					await IdeApp.ProjectOperations.Build (project).Task;
-					await UnitTestService.RefreshTests (CancellationToken.None);
+					bool buildBeforeExecuting = IdeApp.Preferences.BuildBeforeRunningTests;
+
+					if (buildBeforeExecuting) {
+						await IdeApp.ProjectOperations.Build (project).Task;
+						await UnitTestService.RefreshTests (CancellationToken.None);
+					}
 
 					foundTest = UnitTestService.SearchTestById (testCase);
 					if (foundTest != null)
 						RunTest (foundTest);
+					else
+						UnitTestService.ReportExecutionError (GettextCatalog.GetString ($"Unit test '{testCase}' could not be loaded."));
 				}
 
 				internal void Select (object sender, EventArgs e)
@@ -368,6 +385,18 @@ namespace MonoDevelop.UnitTesting
 		/// </summary>
 		/// <value>The ignore test method attribute marker.</value>
 		string IgnoreTestClassAttributeMarker { get; }
+	}
+
+	/// <summary>
+	/// TODO: Merge with IUnitTestMarkers - possible replace it with an abstract class in next API break.
+	/// </summary>
+	public interface IUnitTestMarkers2 : IUnitTestMarkers
+	{
+		/// <summary>
+		/// TestCaseSourceAttribute is used on a parameterized test method to identify the property, method or field that will provide the required arguments.  It has to be applied to a test method.
+		/// </summary>
+		/// <value>The test method attribute marker.</value>
+		string TestCaseSourceAttributeMarker { get; }
 	}
 }
 

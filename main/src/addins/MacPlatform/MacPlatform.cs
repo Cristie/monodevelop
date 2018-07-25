@@ -34,6 +34,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 
 using AppKit;
+using CoreFoundation;
 using Foundation;
 using CoreGraphics;
 
@@ -54,6 +55,8 @@ using ObjCRuntime;
 using System.Diagnostics;
 using Xwt.Mac;
 using MonoDevelop.Components.Mac;
+using System.Reflection;
+using MacPlatform;
 
 namespace MonoDevelop.MacIntegration
 {
@@ -83,6 +86,57 @@ namespace MonoDevelop.MacIntegration
 			}
 		}
 
+		[DllImport("/usr/lib/libobjc.dylib")]
+		private static extern IntPtr class_getInstanceMethod(IntPtr classHandle, IntPtr Selector);
+
+		[DllImport("/usr/lib/libobjc.dylib")]
+		private static extern IntPtr method_getImplementation(IntPtr method);
+
+		[DllImport("/usr/lib/libobjc.dylib")]
+		private static extern IntPtr imp_implementationWithBlock(ref BlockLiteral block);
+
+		[DllImport("/usr/lib/libobjc.dylib")]
+		private static extern void method_setImplementation(IntPtr method, IntPtr imp);
+
+		[MonoNativeFunctionWrapper]
+		delegate void AccessibilitySetValueForAttributeDelegate (IntPtr self, IntPtr selector, IntPtr valueHandle, IntPtr attributeHandle);
+		delegate void SwizzledAccessibilitySetValueForAttributeDelegate (IntPtr block, IntPtr self, IntPtr valueHandle, IntPtr attributeHandle);
+
+		static IntPtr originalAccessibilitySetValueForAttributeMethod;
+		void SwizzleNSApplication ()
+		{
+			// Swizzle accessibilitySetValue:forAttribute: so that we can detect when VoiceOver gets enabled
+			var nsApplicationClassHandle = Class.GetHandle ("NSApplication");
+			var accessibilitySetValueForAttributeSelector = Selector.GetHandle ("accessibilitySetValue:forAttribute:");
+
+			var accessibilitySetValueForAttributeMethod = class_getInstanceMethod (nsApplicationClassHandle, accessibilitySetValueForAttributeSelector);
+			originalAccessibilitySetValueForAttributeMethod = method_getImplementation (accessibilitySetValueForAttributeMethod);
+
+			var block = new BlockLiteral ();
+
+			SwizzledAccessibilitySetValueForAttributeDelegate d = accessibilitySetValueForAttribute;
+			block.SetupBlock (d, null);
+			var imp = imp_implementationWithBlock (ref block);
+			method_setImplementation (accessibilitySetValueForAttributeMethod, imp);
+		}
+
+		[MonoPInvokeCallback (typeof (SwizzledAccessibilitySetValueForAttributeDelegate))]
+		static void accessibilitySetValueForAttribute (IntPtr block, IntPtr self, IntPtr valueHandle, IntPtr attributeHandle)
+		{
+			var d = Marshal.GetDelegateForFunctionPointer<AccessibilitySetValueForAttributeDelegate> (originalAccessibilitySetValueForAttributeMethod);
+			d (self, Selector.GetHandle ("accessibilitySetValue:forAttribute:"), valueHandle, attributeHandle);
+
+			NSString attrString = (NSString)ObjCRuntime.Runtime.GetNSObject (attributeHandle);
+			var val = (NSNumber)ObjCRuntime.Runtime.GetNSObject (valueHandle);
+
+			if (attrString == "AXEnhancedUserInterface" && !IdeTheme.AccessibilityEnabled) {
+				if (val.BoolValue) {
+					ShowVoiceOverNotice ();
+				}
+			}
+			AccessibilityInUse = val.BoolValue;
+		}
+
 		public MacPlatformService ()
 		{
 			if (initedGlobal)
@@ -105,7 +159,50 @@ namespace MonoDevelop.MacIntegration
 
 			Xwt.Toolkit.CurrentEngine.RegisterBackend<IExtendedTitleBarWindowBackend,ExtendedTitleBarWindowBackend> ();
 			Xwt.Toolkit.CurrentEngine.RegisterBackend<IExtendedTitleBarDialogBackend,ExtendedTitleBarDialogBackend> ();
+
+			var description = XamMacBuildInfo.Value;
+			if (string.IsNullOrEmpty (description)) {
+				LoggingService.LogWarning ("Failed to parse version of Xamarin.Mac used at runtime");
+			} else {
+				LoggingService.LogInfo ("Using {0}", description);
+			}
 		}
+
+		static string GetInfoPart (string line)
+		{
+			return line.Split (':') [1].Trim ();
+		}
+
+		static Lazy<string> XamMacBuildInfo = new Lazy<string> (() => {
+			const string buildInfoResource = "Xamarin.Mac.buildinfo";
+			var asm = System.Reflection.Assembly.GetExecutingAssembly ();
+
+			string version, hash, branch;
+
+			try {
+				using (var stream = asm.GetManifestResourceStream (buildInfoResource))
+				using (var sr = new StreamReader (stream)) {
+					// Version: 4.4.0.36
+					// Hash: 0c7c49a6
+					// Branch: master
+					// Build date: 2018 - 03 - 12 15:24:46 - 0400 -- discarded
+
+					version = GetInfoPart (sr.ReadLine ());
+					hash = GetInfoPart (sr.ReadLine ());
+					branch = GetInfoPart (sr.ReadLine ());
+
+					return $"Xamarin.Mac {version} ({branch} / {hash})";
+				}
+			} catch {
+				return string.Empty;
+			}
+		});
+
+		internal override string GetNativeRuntimeDescription ()
+		{
+			return XamMacBuildInfo.Value;
+		}
+
 
 		static void CheckGtkVersion (uint major, uint minor, uint micro)
 		{
@@ -140,7 +237,9 @@ namespace MonoDevelop.MacIntegration
 		public override Xwt.Toolkit LoadNativeToolkit ()
 		{
 			var path = Path.GetDirectoryName (GetType ().Assembly.Location);
-			System.Reflection.Assembly.LoadFrom (Path.Combine (path, "Xwt.XamMac.dll"));
+			Assembly.LoadFrom (Path.Combine (path, "Xwt.XamMac.dll"));
+
+			// Also calls NSApplication.Init();
 			var loaded = Xwt.Toolkit.Load (Xwt.ToolkitType.XamMac);
 
 			loaded.RegisterBackend<Xwt.Backends.IDialogBackend, ThemedMacDialogBackend> ();
@@ -169,6 +268,17 @@ namespace MonoDevelop.MacIntegration
 				};
 			}
 
+			// Listen to the AtkCocoa notification for the presence of VoiceOver
+			SwizzleNSApplication ();
+
+			var nc = NSNotificationCenter.DefaultCenter;
+			nc.AddObserver ((NSString)"AtkCocoaAccessibilityEnabled", (NSNotification) => {
+				LoggingService.LogInfo ($"VoiceOver on {IdeTheme.AccessibilityEnabled}");
+				if (!IdeTheme.AccessibilityEnabled) {
+					ShowVoiceOverNotice ();
+				}
+			}, NSApplication.SharedApplication);
+
 			// Now that Cocoa has been initialized we can check whether the keyboard focus mode is turned on
 			// See System Preferences - Keyboard - Shortcuts - Full Keyboard Access
 			var keyboardMode = NSUserDefaults.StandardUserDefaults.IntForKey ("AppleKeyboardUIMode");
@@ -180,7 +290,35 @@ namespace MonoDevelop.MacIntegration
 				Gtk.Rc.ParseString ("style \"radio-or-check-box\" { engine \"xamarin\" { focusstyle = 2 } } ");
 			}
 
+			// Disallow window tabbing globally
+			if (MacSystemInformation.OsVersion >= MacSystemInformation.Sierra)
+				NSWindow.AllowsAutomaticWindowTabbing = false;
+
 			return loaded;
+		}
+
+		const string EnabledKey = "com.monodevelop.AccessibilityEnabled";
+		static void ShowVoiceOverNotice ()
+		{
+			var alert = new NSAlert ();
+			alert.MessageText = GettextCatalog.GetString ("Assistive Technology Detected");
+			alert.InformativeText = GettextCatalog.GetString ("{0} has detected an assistive technology (such as VoiceOver) is running. Do you want to restart {0} and enable the accessibility features?", BrandingService.ApplicationName);
+			alert.AddButton (GettextCatalog.GetString ("Restart and enable"));
+			alert.AddButton (GettextCatalog.GetString ("No"));
+
+			var result = alert.RunModal ();
+			switch (result) {
+			case 1000:
+				NSUserDefaults defaults = NSUserDefaults.StandardUserDefaults;
+				defaults.SetBool (true, EnabledKey);
+				defaults.Synchronize ();
+
+				IdeApp.Restart ();
+				break;
+
+			default:
+				break;
+			}
 		}
 
 		protected override string OnGetMimeTypeForUri (string uri)
@@ -316,6 +454,8 @@ namespace MonoDevelop.MacIntegration
 				IdeApp.Workbench.RootWindow.Realized += (sender, args) => {
 					var win = GtkQuartz.GetWindow ((Gtk.Window) sender);
 					win.CollectionBehavior |= NSWindowCollectionBehavior.FullScreenPrimary;
+					if (MacSystemInformation.OsVersion >= MacSystemInformation.Sierra)
+						win.TabbingMode = NSWindowTabbingMode.Disallowed;
 				};
 			}
 
@@ -339,8 +479,8 @@ namespace MonoDevelop.MacIntegration
 				// and need to be updated recursively.
 				UpdateColorPanelSubviewsAppearance (colorPanel.ContentView.Superview, appearance);
 			};
-			
-			// FIXME: Immediate theme switching disabled, until NSAppearance issues are fixed 
+
+			// FIXME: Immediate theme switching disabled, until NSAppearance issues are fixed
 			//IdeApp.Preferences.UserInterfaceTheme.Changed += (s,a) => PatchGtkTheme ();
 		}
 
@@ -458,6 +598,7 @@ namespace MonoDevelop.MacIntegration
 				ApplicationEvents.OpenDocuments += delegate (object sender, ApplicationDocumentEventArgs e) {
 					//OpenFiles may pump the mainloop, but can't do that from an AppleEvent, so use a brief timeout
 					GLib.Timeout.Add (10, delegate {
+						IdeApp.ReportTimeToCode = true;
 						IdeApp.OpenFiles (e.Documents.Select (
 							doc => new FileOpenInformation (doc.Key, null, doc.Value, 1, OpenDocumentOptions.DefaultInternal))
 						);
@@ -468,6 +609,7 @@ namespace MonoDevelop.MacIntegration
 
 				ApplicationEvents.OpenUrls += delegate (object sender, ApplicationUrlEventArgs e) {
 					GLib.Timeout.Add (10, delegate {
+						IdeApp.ReportTimeToCode = true;
 						// Open files via the monodevelop:// URI scheme, compatible with the
 						// common TextMate scheme: http://blog.macromates.com/2007/the-textmate-url-scheme/
 						IdeApp.OpenFiles (e.Urls.Select (url => {
@@ -892,7 +1034,7 @@ namespace MonoDevelop.MacIntegration
 				return base.GetIsFullscreen (window);
 			}
 
-			NSWindow nswin = GtkQuartz.GetWindow (window);
+			NSWindow nswin = window;
 			return (nswin.StyleMask & NSWindowStyle.FullScreenWindow) != 0;
 		}
 
@@ -910,6 +1052,9 @@ namespace MonoDevelop.MacIntegration
 
 		public override bool IsModalDialogRunning ()
 		{
+			if (NSApplication.SharedApplication.ModalWindow != null)
+				return true;
+
 			var toplevels = GtkQuartz.GetToplevels ();
 
 			// Check GtkWindow's Modal flag or for a visible NSPanel
@@ -999,6 +1144,54 @@ namespace MonoDevelop.MacIntegration
 
 			proc.StartInfo = psi;
 			proc.Start ();
+		}
+
+		internal override IPlatformTelemetryDetails CreatePlatformTelemetryDetails ()
+		{
+			return MacTelemetryDetails.CreateTelemetryDetails ();
+		}
+
+		internal override MemoryMonitor CreateMemoryMonitor () => new MacMemoryMonitor ();
+
+		internal class MacMemoryMonitor : MemoryMonitor, IDisposable
+		{
+			const MemoryPressureFlags notificationFlags = MemoryPressureFlags.Critical | MemoryPressureFlags.Warn | MemoryPressureFlags.Normal;
+			internal DispatchSource.MemoryPressure DispatchSource { get; private set; }
+
+			public MacMemoryMonitor ()
+			{
+				DispatchSource = new DispatchSource.MemoryPressure (notificationFlags, DispatchQueue.DefaultGlobalQueue);
+				DispatchSource.SetEventHandler (() => {
+					var platformMemoryStatus = GetPlatformMemoryStatus (DispatchSource.PressureFlags);
+					var args = new PlatformMemoryStatusEventArgs (platformMemoryStatus);
+					OnStatusChanged (args);
+				});
+				DispatchSource.Resume ();
+			}
+
+			static PlatformMemoryStatus GetPlatformMemoryStatus (MemoryPressureFlags flags)
+			{
+				switch (flags) {
+				case MemoryPressureFlags.Critical:
+					return PlatformMemoryStatus.Critical;
+				case MemoryPressureFlags.Warn:
+					return PlatformMemoryStatus.Low;
+				case MemoryPressureFlags.Normal:
+					return PlatformMemoryStatus.Normal;
+				default:
+					LoggingService.LogError ("Unknown MemoryPressureFlags value {0}", flags.ToString ());
+					return PlatformMemoryStatus.Normal;
+				}
+			}
+
+			public void Dispose ()
+			{
+				if (DispatchSource != null) {
+					DispatchSource.Cancel ();
+					DispatchSource.Dispose ();
+					DispatchSource = null;
+				}
+			}
 		}
 	}
 

@@ -38,6 +38,7 @@ using Gtk;
 using MonoDevelop.Ide.Gui.Dialogs;
 using Newtonsoft.Json.Linq;
 using MonoDevelop.Ide.Editor;
+using MonoDevelop.Projects.MSBuild;
 
 namespace MonoDevelop.Ide.Projects.OptionPanels
 {
@@ -245,8 +246,6 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 		//TODO error handling
 		public void Store ()
 		{
-			bool needsRestore = false;
-
 			//get the new framework and netstandard version
 			var isNetStandard = netstandardRadio.Active;
 			var nsVersion = isNetStandard ? NetStandardVersion : null;
@@ -262,7 +261,6 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 			var projectJsonFile = project.GetProjectFile (project.BaseDirectory.Combine ("project.json"));
 			if (isNetStandard && projectJsonFile == null) {
 				projectJsonFile = MigrateToProjectJson (project);
-				needsRestore = true;
 			}
 
 			//if project.json exists, update it
@@ -270,16 +268,11 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 				var nugetFx = nsVersion ?? GetPclProfileFullName (fx.Id) ?? NetStandardDefaultFramework;
 				bool projectJsonChanged;
 				SetProjectJsonValues (projectJsonFile.FilePath, nugetFx, out projectJsonChanged);
-				needsRestore = projectJsonChanged;
 			}
 
 			//if the framework has changed, update it
 			if (fx != null && fx != project.TargetFramework) {
 				project.TargetFramework = fx;
-			}
-
-			if (needsRestore) {
-				FileService.NotifyFileChanged (projectJsonFile.FilePath);
 			}
 		}
 
@@ -376,7 +369,7 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 			return false;
 		}
 
-		static ProjectFile MigrateToProjectJson (DotNetProject project)
+		internal static ProjectFile MigrateToProjectJson (DotNetProject project)
 		{
 			var projectJsonName = project.BaseDirectory.Combine ("project.json");
 			var projectJsonFile = new ProjectFile (projectJsonName, BuildAction.None);
@@ -401,6 +394,7 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 				);
 			}
 
+			List<string> packages = null;
 			var packagesConfigFile = project.GetProjectFile (project.BaseDirectory.Combine ("packages.config"));
 			if (packagesConfigFile != null) {
 				//NOTE: it might also be open and unsaved, but that's an unimportant edge case, ignore it
@@ -408,7 +402,13 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 				if (configDoc.Root != null) {
 					var deps = (json ["dependencies"] as JObject) ?? ((JObject)(json ["dependencies"] = new JObject ()));
 					foreach (var packagelEl in configDoc.Root.Elements ("package")) {
-						deps [(string)packagelEl.Attribute ("id")] = (string)packagelEl.Attribute ("version");
+						var packageId = (string)packagelEl.Attribute ("id");
+						var packageVersion = (string)packagelEl.Attribute ("version");
+						deps [packageId] = packageVersion;
+
+						if (packages == null)
+							packages = new List<string> ();
+						packages.Add (packageId + "." + packageVersion);
 					}
 				}
 			}
@@ -433,6 +433,16 @@ namespace MonoDevelop.Ide.Projects.OptionPanels
 
 				//remove the package refs nuget put in the file, project.json doesn't use those
 				project.References.RemoveRange (project.References.Where (IsFromPackage).ToArray ());
+
+				// Remove any imports from NuGet packages. These will be added by NuGet into the generated
+				// ProjectName.nuget.props and ProjectName.nuget.targets files when using project.json.
+				if (packages != null) {
+					foreach (var import in project.MSBuildProject.Imports.ToArray ()) {
+						if (packages.Any (p => import.Project.IndexOf (p, StringComparison.OrdinalIgnoreCase) >= 0)) {
+							import.ParentObject.ParentProject.Remove (import);
+						}
+					}
+				}
 			}
 
 			return projectJsonFile;

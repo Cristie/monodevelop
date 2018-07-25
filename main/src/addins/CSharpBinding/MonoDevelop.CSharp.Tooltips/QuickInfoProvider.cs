@@ -53,26 +53,25 @@ using System.Collections.Immutable;
 using System.Collections.Generic;
 using System.Text;
 using MonoDevelop.Ide.Fonts;
+using System.Linq;
+using MonoDevelop.Ide.Editor.Highlighting;
 
 namespace MonoDevelop.SourceEditor
 {
 	static class QuickInfoProvider
 	{
-		public static async Task<TooltipInformation> GetQuickInfoAsync(TextEditor editor, DocumentContext ctx, ISymbol symbol, CancellationToken cancellationToken = default(CancellationToken))
+		public static async Task<TooltipInformation> GetQuickInfoAsync (int caretOffset, EditorTheme theme, DocumentContext ctx, ISymbol symbol, CancellationToken cancellationToken = default (CancellationToken))
 		{
 			var tooltipInfo = new TooltipInformation ();
 
 			var model = await ctx.AnalysisDocument.GetSemanticModelAsync ();
 			var descriptionService = ctx.RoslynWorkspace.Services.GetLanguageServices (model.Language).GetService<ISymbolDisplayService> ();
 
-			var sections = await descriptionService.ToDescriptionGroupsAsync (ctx.RoslynWorkspace, model, editor.CaretOffset, new [] { symbol }.AsImmutable (), default (CancellationToken)).ConfigureAwait (false);
+			var sections = await descriptionService.ToDescriptionGroupsAsync (ctx.RoslynWorkspace, model, caretOffset, new [] { symbol }.AsImmutable (), default (CancellationToken)).ConfigureAwait (false);
 
 			ImmutableArray<TaggedText> parts;
 
-			var sb = new StringBuilder ();
-			sb.Append ("<span font='" + FontService.SansFontName + "' size='small'>");
-
-			var theme = editor.Options.GetEditorTheme ();
+			var sb = StringBuilderCache.Allocate ();
 
 			if (sections.TryGetValue (SymbolDescriptionGroups.MainDescription, out parts)) {
 				TaggedTextUtil.AppendTaggedText (sb, theme, parts);
@@ -84,9 +83,10 @@ namespace MonoDevelop.SourceEditor
 			}
 
 			var formatter = ctx.RoslynWorkspace.Services.GetLanguageServices (model.Language).GetService<IDocumentationCommentFormattingService> ();
-			var documentation = symbol.GetDocumentationParts (model, editor.CaretOffset, formatter, cancellationToken);
+			var documentation = symbol.GetDocumentationParts (model, caretOffset, formatter, cancellationToken);
+			sb.Append ("<span font='" + FontService.SansFontName + "' size='small'>");
 
-			if (documentation != null) {
+			if (documentation != null && documentation.Any ()) {
 				sb.AppendLine ();
 				sb.AppendLine ();
 				TaggedTextUtil.AppendTaggedText (sb, theme, documentation);
@@ -113,9 +113,16 @@ namespace MonoDevelop.SourceEditor
 					TaggedTextUtil.AppendTaggedText (sb, theme, parts);
 				}
 			}
+
+			if (sections.TryGetValue (SymbolDescriptionGroups.Captures, out parts)) {
+				if (!parts.IsDefaultOrEmpty) {
+					sb.AppendLine ();
+					TaggedTextUtil.AppendTaggedText (sb, theme, parts);
+				}
+			}
 			sb.Append ("</span>");
 
-			tooltipInfo.SignatureMarkup = sb.ToString ();
+			tooltipInfo.SignatureMarkup = StringBuilderCache.ReturnAndFree (sb);
 			return tooltipInfo;
 		}
 	}

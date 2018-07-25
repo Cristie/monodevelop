@@ -48,7 +48,9 @@ namespace Mono.TextEditor
 			set {
 				isVisible = value;
 
-				Accessible.Hidden = !value;
+				if (Accessible != null) {
+					Accessible.Hidden = !value;
+				}
 			}
 		}
 		
@@ -81,7 +83,7 @@ namespace Mono.TextEditor
 		AccessibilityElementProxy accessible;
 		public virtual AccessibilityElementProxy Accessible {
 			get {
-				if (accessible == null) {
+				if (accessible == null && AccessibilityElementProxy.Enabled) {
 					accessible = new AccessibilityElementProxy ();
 				}
 				return accessible;
@@ -110,7 +112,10 @@ namespace Mono.TextEditor
 
 		protected Margin ()
 		{
-			Accessible.SetRole (AtkCocoa.Roles.AXRuler);
+			var a = Accessible;
+			if (a != null) {
+				a.SetRole (AtkCocoa.Roles.AXRuler);
+			}
 			IsVisible = true;
 		}
 		
@@ -153,7 +158,38 @@ namespace Mono.TextEditor
 			if (MouseLeave != null)
 				MouseLeave (this, EventArgs.Empty);
 		}
-		
+
+		internal protected virtual bool SupportsItemCommands {
+			get {
+				return false;
+			}
+		}
+		internal enum ItemCommand {
+			FocusNextItem,
+			FocusPreviousItem,
+			ActivateCurrentItem
+		};
+
+		internal protected virtual bool HandleItemCommand (ItemCommand command)
+		{
+			return false;
+		}
+
+		internal bool HasFocus { get; private set; }
+		internal protected virtual void FocusIn ()
+		{
+			HasFocus = true;
+
+			// Set the margin as the current focused accessibility element
+			AtkCocoaExtensions.SetCurrentFocus (Accessible);
+		}
+
+		internal protected virtual void FocusOut ()
+		{
+			HasFocus = false;
+			AtkCocoaExtensions.SetCurrentFocus (null);
+		}
+
 		public virtual void Dispose ()
 		{
 			cursor = cursor.Kill ();
@@ -164,7 +200,17 @@ namespace Mono.TextEditor
 		public event EventHandler<MarginMouseEventArgs> MouseMoved;
 		public event EventHandler MouseLeave;
 	}
-	
+
+	class MarginEventArgs : EventArgs
+	{
+		public Margin Margin { get; private set; }
+
+		public MarginEventArgs (Margin margin)
+		{
+			Margin = margin;
+		}
+	}
+
 	class MarginMouseEventArgs : EventArgs
 	{
 		public double X {
@@ -196,7 +242,12 @@ namespace Mono.TextEditor
 			get;
 			private set;
 		}
-		
+
+		public DocumentLocation Location {
+			get;
+			internal set;
+		}
+
 		public bool TriggersContextMenu ()
 		{
 			var evt = RawEvent as Gdk.EventButton;

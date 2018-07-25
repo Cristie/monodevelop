@@ -95,7 +95,7 @@
 	
 	<ExtensionPoint path = "/MonoDevelop/Ide/TextEditorExtensions" name = "Text editor extensions" defaultInsertAfter = "MidStep">
 		<Description>Extensions to the text editor. Classes must be a subclass of TextEditorExtension.</Description>
-		<ExtensionNode name="Class" type="MonoDevelop.Ide.Extensions.TextEditorExtensionNode"/>
+		<ExtensionNode name="Class" type="MonoDevelop.Ide.Extensions.TextEditorExtensionNode" objectType="MonoDevelop.Ide.Editor.Extension.TextEditorExtension" />
 	</ExtensionPoint>
 
 	<ExtensionPoint path = "/MonoDevelop/Ide/CompletionCharacters" name = "Code completion commit characters">
@@ -213,7 +213,7 @@
 
 	<ExtensionPoint path = "/MonoDevelop/Ide/AutoInsertBracketHandler" name = "Automatic bracket handler">
 		<Description>Algorithm for providing automatic bracket insertion.</Description>
-		<ExtensionNode name="Class"/>
+		<ExtensionNode name="Handler" type="MonoDevelop.Ide.Extensions.TextEditorExtensionNode" objectType="MonoDevelop.Ide.Editor.Extension.AutoInsertBracketHandler" />
 	</ExtensionPoint>
 
 	<ExtensionPoint path = "/MonoDevelop/Ide/ErrorDocumentationProvider" name = "Link to documentation">
@@ -236,6 +236,10 @@
 
 	<ExtensionPoint path="/MonoDevelop/Ide/Composition">
 		<ExtensionNode name = "Assembly" type = "MonoDevelop.Core.AddIns.AssemblyExtensionNode" />
+	</ExtensionPoint>
+
+	<ExtensionPoint path="/MonoDevelop/Ide/TypeService/OptionProviders">
+		<ExtensionNode name="Class" />
 	</ExtensionPoint>
 
   <!-- Extensions -->
@@ -314,12 +318,15 @@
 		<Class class = "MonoDevelop.Ide.Editor.Extension.BraceMatcherTextEditorExtension" />
 		<Class class = "MonoDevelop.Ide.Editor.Extension.DefaultCommandTextEditorExtension" />
 		<Class class = "MonoDevelop.Ide.Editor.Extension.FoldingTextEditorExtension" />
+		<Class class = "MonoDevelop.Ide.Editor.Extension.BlockStructureFoldingTextEditorExtension" />
 		<Class class = "MonoDevelop.Ide.Editor.Extension.ErrorHandlerTextEditorExtension" />
 		<Class class = "MonoDevelop.Ide.Editor.Extension.AutoInsertBracketTextEditorExtension" />
 		<Class class = "MonoDevelop.Ide.Editor.Extension.HighlightUrlExtension" />
+		<Class class = "MonoDevelop.Ide.Editor.Extension.TagCommentsTextEditorExtension" />
 		<Class class = "MonoDevelop.Ide.Editor.TextMate.TextMateFoldingTextEditorExtension" />
 		<Class class = "MonoDevelop.Ide.Editor.TextMate.TextMateIndentationTextEditorExtension" />
 		<Class class = "MonoDevelop.Ide.Editor.TextMate.TextMateCompletionTextEditorExtension" />
+		<Class class = "MonoDevelop.Ide.Editor.Extension.LineSeparatorTextEditorExtension" />
 		<Class id="FinalStep" class = "MonoDevelop.Ide.Editor.Extension.TextEditorExtensionMarker" />
 	</Extension>
 	
@@ -395,20 +402,23 @@
 		<Class class = "MonoDevelop.Ide.GettingStarted.GettingStartedProjectExtension"/>
 	</Extension>
 
-	<Extension path="/MonoDevelop/Ide/TypeService/PlatformMefHostServices">
-		<Assembly file="Microsoft.VisualStudio.Text.Logic.dll"/>
-	</Extension>
-
 	<Extension path="/MonoDevelop/Ide/Composition">
+		<Assembly file="Microsoft.CodeAnalysis.CSharp.EditorFeatures.dll"/>
+		<Assembly file="Microsoft.CodeAnalysis.EditorFeatures.dll"/>
+		<Assembly file="Microsoft.CodeAnalysis.EditorFeatures.Text.dll"/>
 		<Assembly file="Microsoft.CodeAnalysis.Features.dll" />
 		<Assembly file="Microsoft.CodeAnalysis.Workspaces.dll" />
+		<Assembly file="Microsoft.CodeAnalysis.Workspaces.Desktop.dll" />
 		<Assembly file="Microsoft.CodeAnalysis.CSharp.Features.dll" />
 		<Assembly file="Microsoft.CodeAnalysis.CSharp.Workspaces.dll" />
 		<Assembly file="Microsoft.CodeAnalysis.VisualBasic.Features.dll" />
 		<Assembly file="Microsoft.CodeAnalysis.VisualBasic.Workspaces.dll" />
 		<Assembly file="MonoDevelop.Ide.dll"/>
 		<Assembly file="Microsoft.VisualStudio.Text.Implementation.dll"/>
+		<Assembly file="Microsoft.VisualStudio.Text.Logic.dll"/>
+		<Assembly file="Microsoft.VisualStudio.Text.UI.dll"/>
 		<Assembly file="Microsoft.VisualStudio.Language.StandardClassification.dll"/>
+		<Assembly file="Microsoft.CodeAnalysis.CSharp.EditorFeatures.dll" />
 	</Extension>
 
 </ExtensionModel>

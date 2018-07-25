@@ -32,6 +32,7 @@ using MonoDevelop.Ide.Gui;
 using MonoDevelop.Ide.Tasks;
 using MonoDevelop.Projects;
 using MonoDevelop.Core.Instrumentation;
+using MonoDevelop.Ide.Editor.Extension;
 
 namespace MonoDevelop.Ide
 {
@@ -49,14 +50,27 @@ namespace MonoDevelop.Ide
 		internal static Counter DocumentsInMemory = InstrumentationService.CreateCounter ("Documents in memory", "IDE");
 		internal static Counter PadsLoaded = InstrumentationService.CreateCounter ("Pads loaded", "IDE");
 		internal static TimerCounter CommandTargetScanTime = InstrumentationService.CreateTimerCounter ("Command target scan", "Timing", 0.3, false);
-		internal static TimerCounter OpenWorkspaceItemTimer = InstrumentationService.CreateTimerCounter ("Solution opened in the IDE", "IDE", id:"Ide.Shell.SolutionOpened");
-		internal static TimerCounter OpenDocumentTimer = InstrumentationService.CreateTimerCounter ("Document opened", "IDE");
+		internal static TimerCounter<OpenWorkspaceItemMetadata> OpenWorkspaceItemTimer = InstrumentationService.CreateTimerCounter<OpenWorkspaceItemMetadata> ("Solution opened in the IDE", "IDE", id:"Ide.Shell.SolutionOpened");
+		internal static TimerCounter<OpenDocumentMetadata> OpenDocumentTimer = InstrumentationService.CreateTimerCounter<OpenDocumentMetadata> ("Open document", "IDE", id:"Ide.Shell.OpenDocument");
 		internal static TimerCounter DocumentOpened = InstrumentationService.CreateTimerCounter ("Document opened", "IDE", id:"Ide.Shell.DocumentOpened");
 		internal static Counter AutoSavedFiles = InstrumentationService.CreateCounter ("Autosaved Files", "Text Editor");
 		internal static TimerCounter BuildItemTimer = InstrumentationService.CreateTimerCounter ("Project/Solution built in the IDE", "IDE", id:"Ide.Shell.ProjectBuilt");
 		internal static Counter PadShown = InstrumentationService.CreateCounter ("Pad focused", "IDE", id:"Ide.Shell.PadShown");
 		internal static TimerCounter SaveAllTimer = InstrumentationService.CreateTimerCounter ("Save all documents", "IDE", id:"Ide.Shell.SaveAll");
 		internal static TimerCounter CloseWorkspaceTimer = InstrumentationService.CreateTimerCounter ("Workspace closed", "IDE", id:"Ide.Shell.CloseWorkspace");
+		internal static Counter<StartupMetadata> Startup = InstrumentationService.CreateCounter<StartupMetadata> ("IDE Startup", "IDE", id:"Ide.Startup");
+		internal static TimerCounter CompositionAddinLoad = InstrumentationService.CreateTimerCounter ("MEF Composition Addin Load", "IDE", id: "Ide.Startup.Composition.ExtensionLoad");
+		internal static TimerCounter CompositionDiscovery = InstrumentationService.CreateTimerCounter ("MEF Composition From Discovery", "IDE", id:"Ide.Startup.Composition.Discovery");
+		internal static TimerCounter CompositionCacheControl = InstrumentationService.CreateTimerCounter ("MEF Composition Control Cache", "IDE", id: "Ide.Startup.Composition.ControlCache");
+		internal static TimerCounter CompositionCache = InstrumentationService.CreateTimerCounter ("MEF Composition From Cache", "IDE", id: "Ide.Startup.Composition.Cache");
+		internal static TimerCounter CompositionSave = InstrumentationService.CreateTimerCounter ("MEF Composition Save", "IDE", id: "Ide.CompositionSave");
+		internal static TimerCounter AnalysisTimer = InstrumentationService.CreateTimerCounter ("Code Analysis", "IDE", id:"Ide.CodeAnalysis");
+		internal static TimerCounter ProcessCodeCompletion = InstrumentationService.CreateTimerCounter ("Process Code Completion", "IDE", id: "Ide.ProcessCodeCompletion", logMessages:false);
+		internal static Counter<CompletionStatisticsMetadata> CodeCompletionStats = InstrumentationService.CreateCounter<CompletionStatisticsMetadata> ("Code Completion Statistics", "IDE", id:"Ide.CodeCompletionStatistics");
+		internal static Counter<TimeToCodeMetadata> TimeToCode = InstrumentationService.CreateCounter<TimeToCodeMetadata> ("Time To Code", "IDE", id: "Ide.TimeToCode");
+
+		internal static bool TrackingBuildAndDeploy;
+		internal static TimerCounter<CounterMetadata> BuildAndDeploy = InstrumentationService.CreateTimerCounter<CounterMetadata> ("Build and Deploy", "IDE", id: "Ide.BuildAndDeploy");
 
 		internal static class ParserService {
 			public static TimerCounter FileParsed = InstrumentationService.CreateTimerCounter ("File parsed", "Parser Service");
@@ -84,8 +98,67 @@ namespace MonoDevelop.Ide
 			reports [12] = ParserService.ObjectDeserialized.ToString ();
 			reports [13] = ParserService.WorkspaceItemLoaded.ToString ();
 			reports [14] = ParserService.ProjectsLoaded.ToString ();
+			reports [15] = Startup.ToString ();
 
 			return reports;
+		}
+	}
+
+	class AssetMetadata : CounterMetadata
+	{
+		public int AssetTypeId {
+			get => GetProperty<int> ();
+			set => SetProperty (value);
+		}
+		public string AssetTypeName {
+			get => GetProperty<string> ();
+			set => SetProperty (value);
+		}
+	}
+
+	class StartupMetadata: AssetMetadata
+	{	
+		public long CorrectedStartupTime {
+			get => GetProperty<long> ();
+			set => SetProperty (value);
+		}
+		public long StartupType {
+			get => GetProperty<long> ();
+			set => SetProperty (value);
+		}
+		public bool IsInitialRun {
+			get => GetProperty<bool> ();
+			set => SetProperty (value);
+		}
+		public bool IsInitialRunAfterUpgrade {
+			get => GetProperty<bool> ();
+			set => SetProperty (value);
+		}
+		public long TimeSinceMachineStart {
+			get => GetProperty<long> ();
+			set => SetProperty (value);
+		}
+		public long TimeSinceLogin {
+			get => GetProperty<long> ();
+			set => SetProperty (value);
+		}
+	}
+
+	class TimeToCodeMetadata : CounterMetadata
+	{
+		public long CorrectedDuration {
+			get => GetProperty<long> ();
+			set => SetProperty (value);
+		}
+
+		public long StartupTime {
+			get => GetProperty<long> ();
+			set => SetProperty (value);
+		}
+
+		public long SolutionLoadTime {
+			get => GetProperty<long> ();
+			set => SetProperty (value);
 		}
 	}
 }

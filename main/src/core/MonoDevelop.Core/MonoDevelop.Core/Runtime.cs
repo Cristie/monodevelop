@@ -27,23 +27,23 @@
 //
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Net.Security;
+using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
+
 using Mono.Addins;
 using Mono.Addins.Setup;
-using MonoDevelop.Core;
 using MonoDevelop.Core.Assemblies;
 using MonoDevelop.Core.Execution;
 using MonoDevelop.Core.Instrumentation;
 using MonoDevelop.Core.Setup;
-using System.Security.Cryptography.X509Certificates;
-using System.Net.Security;
-using System.Net;
-using System.Threading.Tasks;
-using System.Collections.Generic;
-
 
 namespace MonoDevelop.Core
 {
@@ -85,7 +85,8 @@ namespace MonoDevelop.Core
 
 			Platform.Initialize ();
 
-			mainThread = Thread.CurrentThread;
+			mainThread = mainThread ?? Thread.CurrentThread;
+
 			// Set a default sync context
 			if (SynchronizationContext.Current == null) {
 				defaultSynchronizationContext = new SynchronizationContext ();
@@ -107,6 +108,7 @@ namespace MonoDevelop.Core
 			AddinManager.AddinLoadError += OnLoadError;
 			AddinManager.AddinLoaded += OnLoad;
 			AddinManager.AddinUnloaded += OnUnload;
+			AddinManager.AddinAssembliesLoaded += OnAssembliesLoaded;
 
 			try {
 				Counters.RuntimeInitialization.Trace ("Initializing Addin Manager");
@@ -162,7 +164,7 @@ namespace MonoDevelop.Core
 			foreach (AddinRepository rep in reps.GetRepositories ()) {
 				if (rep.Url.StartsWith ("http://go-mono.com/md/") || 
 					(rep.Url.StartsWith ("http://monodevelop.com/files/addins/")) ||
-					(rep.Url.StartsWith ("http://addins.monodevelop.com/") && !validUrls.Contains (rep.Url)))
+				    ((rep.Url.StartsWith ("http://addins.monodevelop.com/") || rep.Url.StartsWith ("https://addins.monodevelop.com/")) && !validUrls.Contains (rep.Url)))
 					reps.RemoveRepository (rep.Url);
 			}
 			
@@ -187,7 +189,7 @@ namespace MonoDevelop.Core
 			else
 				platform = "Linux";
 			
-			return "http://addins.monodevelop.com/" + quality + "/" + platform + "/" + AddinManager.CurrentAddin.Version + "/main.mrep";
+			return "https://addins.monodevelop.com/" + quality + "/" + platform + "/" + AddinManager.CurrentAddin.Version + "/main.mrep";
 		}
 		
 		static void SetupInstrumentation ()
@@ -210,18 +212,31 @@ namespace MonoDevelop.Core
 			string msg = "Add-in error (" + args.AddinId + "): " + args.Message;
 			LoggingService.LogError (msg, args.Exception);
 		}
-		
+
 		static void OnLoad (object s, AddinEventArgs args)
 		{
-			Counters.AddinsLoaded.Inc ("Add-in loaded: " + args.AddinId, new Dictionary<string,string> { { "AddinId", args.AddinId } });
+			Counters.AddinsLoaded.Inc ("Add-in loaded: " + args.AddinId, new Dictionary<string, string> {
+				{ "AddinId", args.AddinId },
+				{ "LoadTrace", Environment.StackTrace },
+			});
+#if DEBUG
+			LoggingService.LogDebug ("Add-in loaded: {0}: {1}", args.AddinId, Environment.StackTrace);
+#endif
 		}
 		
 		static void OnUnload (object s, AddinEventArgs args)
 		{
 			Counters.AddinsLoaded.Dec ("Add-in unloaded: " + args.AddinId);
 		}
+
+		static void OnAssembliesLoaded (object s, AddinEventArgs args)
+		{
+#if DEBUG
+			LoggingService.LogDebug ("Add-in assemblies loaded: {0}: {1}", args.AddinId, Environment.StackTrace);
+#endif
+		}
 		
-		internal static bool Initialized {
+		public static bool Initialized {
 			get { return initialized; }
 		}
 		
@@ -234,6 +249,7 @@ namespace MonoDevelop.Core
 				ShuttingDown (null, EventArgs.Empty);
 			
 			PropertyService.SaveProperties ();
+			FSW.OSX.FileSystemWatcher.DisposeAll ();
 			
 			if (processService != null) {
 				processService.Dispose ();
@@ -298,20 +314,15 @@ namespace MonoDevelop.Core
 			set {
 				if (mainSynchronizationContext != null && value != null)
 					throw new InvalidOperationException ("The main synchronization context has already been set");
+
+				mainThread = Thread.CurrentThread;
 				mainSynchronizationContext = value;
-				taskScheduler = null;
+				taskScheduler = new SynchronizationContextTaskScheduler (value);
 			}
 		}
-
 
 		static TaskScheduler taskScheduler;
-		public static TaskScheduler MainTaskScheduler {
-			get {
-				if (taskScheduler == null)
-					RunInMainThread (() => taskScheduler = TaskScheduler.FromCurrentSynchronizationContext ()).Wait ();
-				return taskScheduler;
-			}
-		}
+		public static TaskScheduler MainTaskScheduler => taskScheduler;
 
 		/// <summary>
 		/// Runs an action in the main thread (usually the UI thread). The method returns a task, so it can be awaited.
@@ -327,14 +338,15 @@ namespace MonoDevelop.Core
 					ts.SetException (ex);
 				}
 			} else {
-				MainSynchronizationContext.Post (delegate {
+				MainSynchronizationContext.Post (state => {
+					var (act, tcs) = (ValueTuple<Action, TaskCompletionSource<int>>)state;
 					try {
-						action ();
-						ts.SetResult (0);
+						act ();
+						tcs.SetResult (0);
 					} catch (Exception ex) {
-						ts.SetException (ex);
+						tcs.SetException (ex);
 					}
-				}, null);
+				}, (action, ts));
 			}
 			return ts.Task;
 		}
@@ -352,13 +364,14 @@ namespace MonoDevelop.Core
 					ts.SetException (ex);
 				}
 			} else {
-				MainSynchronizationContext.Post (delegate {
+				MainSynchronizationContext.Post (state => {
+					var (fun, tcs) = (ValueTuple<Func<T>, TaskCompletionSource<T>>)state;
 					try {
-						ts.SetResult (func ());
+						tcs.SetResult (fun ());
 					} catch (Exception ex) {
-						ts.SetException (ex);
+						tcs.SetException (ex);
 					}
-				}, null);
+				}, (func, ts));
 			}
 			return ts.Task;
 		}
@@ -375,12 +388,13 @@ namespace MonoDevelop.Core
 			} else {
 				var ts = new TaskCompletionSource<T> ();
 				MainSynchronizationContext.Post (async state => {
+					var (fun, tcs) = (ValueTuple<Func<Task<T>>, TaskCompletionSource<T>>)state;
 					try {
-						ts.SetResult (await func ());
+						tcs.SetResult (await fun ());
 					} catch (Exception ex) {
-						ts.SetException (ex);
+						tcs.SetException (ex);
 					}
-				}, null);
+				}, (func, ts));
 				return ts.Task;
 			}
 		}
@@ -397,16 +411,22 @@ namespace MonoDevelop.Core
 			} else {
 				var ts = new TaskCompletionSource<int> ();
 				MainSynchronizationContext.Post (async state => {
+					var (fun, tcs) = (ValueTuple<Func<Task>, TaskCompletionSource<int>>)state;
 					try {
-						await func ();
-						ts.SetResult (0);
+						await fun ();
+						tcs.SetResult (0);
 					} catch (Exception ex) {
-						ts.SetException (ex);
+						tcs.SetException (ex);
 					}
-				}, null);
+				}, (func, ts));
 				return ts.Task;
 			}
 		}
+
+		/// <summary>
+		/// The main UI thread of the application. Needed to initialize the JoinableTaskContext.
+		/// </summary>
+		public static Thread MainThread => mainThread;
 
 		/// <summary>
 		/// Returns true if current thread is GUI thread.
@@ -483,9 +503,10 @@ namespace MonoDevelop.Core
 		{
 			// Explicitly load the msbuild libraries since they are not installed in the GAC
 			var path = systemAssemblyService.CurrentRuntime.GetMSBuildBinPath ("15.0");
-			SystemAssemblyService.LoadAssemblyFrom (System.IO.Path.Combine (path, "Microsoft.Build.dll"));
-			SystemAssemblyService.LoadAssemblyFrom (System.IO.Path.Combine (path, "Microsoft.Build.Framework.dll"));
-			SystemAssemblyService.LoadAssemblyFrom (System.IO.Path.Combine (path, "Microsoft.Build.Utilities.Core.dll"));
+			LoadAssemblyFrom (System.IO.Path.Combine (path, "Microsoft.Build.dll"));
+			LoadAssemblyFrom (System.IO.Path.Combine (path, "Microsoft.Build.Framework.dll"));
+			LoadAssemblyFrom (System.IO.Path.Combine (path, "Microsoft.Build.Tasks.Core.dll"));
+			LoadAssemblyFrom (System.IO.Path.Combine (path, "Microsoft.Build.Utilities.Core.dll"));
 
 			if (Type.GetType ("Mono.Runtime") == null) {
 				AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
@@ -507,6 +528,20 @@ namespace MonoDevelop.Core
 			}
 
 			return null;
+		}
+
+		public static Assembly LoadAssemblyFrom (string asmPath)
+		{
+			if (Environment.OSVersion.Platform == PlatformID.Win32NT) {
+				// MEF composition under Win32 requires that all assemblies be loaded in the
+				// Assembly.Load() context so use Assembly.Load() after getting the AssemblyName
+				// (which, on Win32, also contains the full path information so Assembly.Load()
+				// will work).
+				var asmName = AssemblyName.GetAssemblyName (asmPath);
+				return Assembly.Load (asmName);
+			}
+
+			return Assembly.LoadFrom (asmPath);
 		}
 	}
 	
@@ -547,7 +582,11 @@ namespace MonoDevelop.Core
 		public readonly ConfigurationProperty<bool> EnableAutomatedTesting = ConfigurationProperty.Create ("MonoDevelop.EnableAutomatedTesting", false);
 		public readonly ConfigurationProperty<string> UserInterfaceLanguage = ConfigurationProperty.Create ("MonoDevelop.Ide.UserInterfaceLanguage", "");
 		public readonly ConfigurationProperty<MonoDevelop.Projects.MSBuild.MSBuildVerbosity> MSBuildVerbosity = ConfigurationProperty.Create ("MonoDevelop.Ide.MSBuildVerbosity", MonoDevelop.Projects.MSBuild.MSBuildVerbosity.Normal);
-		public readonly ConfigurationProperty<bool> BuildWithMSBuild = ConfigurationProperty.Create ("MonoDevelop.Ide.BuildWithMSBuild", true);
+
+		[Obsolete]
+		public readonly ConfigurationProperty<bool> BuildWithMSBuild = ConfigurationProperty.CreateObsolete (true);
+
+		public readonly ConfigurationProperty<bool> SkipBuildingUnmodifiedProjects = ConfigurationProperty.Create ("MonoDevelop.Ide.SkipBuildingUnmodifiedProjects", false);
 		public readonly ConfigurationProperty<bool> ParallelBuild = ConfigurationProperty.Create ("MonoDevelop.ParallelBuild", true);
 
 		public readonly ConfigurationProperty<string> AuthorName = ConfigurationProperty.Create ("Author.Name", Environment.UserName, oldName:"ChangeLogAddIn.Name");
@@ -555,5 +594,11 @@ namespace MonoDevelop.Core
 		public readonly ConfigurationProperty<string> AuthorCopyright = ConfigurationProperty.Create ("Author.Copyright", (string) null);
 		public readonly ConfigurationProperty<string> AuthorCompany = ConfigurationProperty.Create ("Author.Company", "");
 		public readonly ConfigurationProperty<string> AuthorTrademark = ConfigurationProperty.Create ("Author.Trademark", "");
+
+		/// <summary>
+		/// Gets or sets a value indicating whether the updater should be enabled for the current session.
+		/// This value won't be stored in the user preferences.
+		/// </summary>
+		public bool EnableUpdaterForCurrentSession { get; set; } = true;
 	}
 }

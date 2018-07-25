@@ -48,6 +48,15 @@ namespace MonoDevelop.Components.Commands
 {
 	public class CommandManager: IDisposable
 	{
+		// Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/Headers/Events.h
+		enum JIS_VKS {
+			Yen         = 0x5d,
+			Underscore  = 0x5e,
+			KeypadComma = 0x5f,
+			Eisu        = 0x66,
+			Kana        = 0x68
+		}
+
 		Gtk.Window rootWidget;
 		KeyBindingManager bindings;
 		Gtk.AccelGroup accelGroup;
@@ -61,7 +70,7 @@ namespace MonoDevelop.Components.Commands
 		Hashtable handlerInfo = new Hashtable ();
 		List<ICommandBar> toolbars = new List<ICommandBar> ();
 		CommandTargetChain globalHandlerChain;
-		ArrayList commandUpdateErrors = new ArrayList ();
+		List<object> commandUpdateErrors = new List<object> ();
 		List<ICommandTargetVisitor> visitors = new List<ICommandTargetVisitor> ();
 		LinkedList<Gtk.Window> topLevelWindows = new LinkedList<Gtk.Window> ();
 		Stack delegatorStack = new Stack ();
@@ -319,11 +328,16 @@ namespace MonoDevelop.Components.Commands
 				if (PerformDefaultNSAppAction (window, ev))
 					return null;
 
-				// If the window is a gtk window and is registered in the command manager
-				// process the events through the handler.
-				var gtkWindow = MonoDevelop.Components.Mac.GtkMacInterop.GetGtkWindow (window);
-				if (gtkWindow != null && !TopLevelWindowStack.Contains (gtkWindow))
-					return null;
+				// If this is Eisu or Kana on a Japanese keyboard make sure not to exit yet or
+				// the input source will not switch as expected.
+				if (ev.KeyCode != (ushort)JIS_VKS.Eisu && ev.KeyCode != (ushort)JIS_VKS.Kana)
+				{
+					// If the window is a gtk window and is registered in the command manager
+					// process the events through the handler.
+					var gtkWindow = MonoDevelop.Components.Mac.GtkMacInterop.GetGtkWindow(window);
+					if (gtkWindow != null && !TopLevelWindowStack.Contains(gtkWindow))
+						return null;
+				}
 			}
 
 			// If a modal dialog is running then the menus are disabled, even if the commands are not
@@ -498,7 +512,7 @@ namespace MonoDevelop.Components.Commands
 
 				if (cinfo.Enabled && cinfo.Visible) {
 					if (!dispatched)
-						dispatched = DispatchCommand (commands [i].Id, null, null, CommandSource.Keybinding, ev.Time);
+						dispatched = DispatchCommand (commands [i].Id, null, null, CommandSource.Keybinding, ev.Time, cinfo);
 					conflict.Add (commands [i]);
 				} else
 					bypass = true; // allow Gtk to handle the event if the command is disabled
@@ -1159,7 +1173,10 @@ namespace MonoDevelop.Components.Commands
 		{
 #if MAC
 			var menu = CreateNSMenu (entrySet, initialCommandTarget ?? parent, closeHandler);
-			ContextMenuExtensionsMac.ShowContextMenu (parent, evt, menu);
+			if (parent.nativeWidget is AppKit.NSView)
+				ContextMenuExtensionsMac.ShowContextMenu ((AppKit.NSView)parent.nativeWidget, evt, menu);
+			else
+				ContextMenuExtensionsMac.ShowContextMenu ((Gtk.Widget)parent, evt, menu);
 #else
 			var menu = CreateMenu (entrySet, closeHandler);
 			if (menu != null)
@@ -1182,7 +1199,10 @@ namespace MonoDevelop.Components.Commands
 		{
 #if MAC
 			var menu = CreateNSMenu (entrySet, initialCommandTarget ?? parent);
-			ContextMenuExtensionsMac.ShowContextMenu (parent, x, y, menu);
+			if (parent.nativeWidget is AppKit.NSView)
+				ContextMenuExtensionsMac.ShowContextMenu ((AppKit.NSView)parent.nativeWidget, x, y, menu);
+			else
+				ContextMenuExtensionsMac.ShowContextMenu ((Gtk.Widget)parent, x, y, menu);
 #else
 			var menu = CreateMenu (entrySet);
 			if (menu != null)
@@ -1225,6 +1245,33 @@ namespace MonoDevelop.Components.Commands
 			}
 
 			MonoDevelop.Components.GtkWorkarounds.ShowContextMenu (menu, parent, x, y);
+		}
+
+		/// <summary>
+		/// Shows the context menu.
+		/// </summary>
+		/// <returns><c>true</c>, if context menu was shown, <c>false</c> otherwise.</returns>
+		/// <param name="parent">Widget for which the context menu is shown</param>
+		/// <param name="x">The x coordinate.</param>
+		/// <param name="y">The y coordinate.</param>
+		/// <param name="entrySet">Entry set with the command definitions</param>
+		/// <param name="initialCommandTarget">Initial command target.</param>
+		internal bool ShowContextMenu (Xwt.Widget parent, int x, int y, CommandEntrySet entrySet,
+			object initialCommandTarget = null)
+		{
+			#if MAC
+			var menu = CreateNSMenu (entrySet, initialCommandTarget ?? parent);
+			if (parent.Surface.NativeWidget is AppKit.NSView view)
+				ContextMenuExtensionsMac.ShowContextMenu (view, x, y, menu);
+			else
+				ContextMenuExtensionsMac.ShowContextMenu ((Gtk.Widget)parent.Surface.NativeWidget, x, y, menu);
+			#else
+			var menu = CreateMenu (entrySet);
+			if (menu != null)
+				ShowContextMenu ((Gtk.Widget)parent.Surface.NativeWidget, x, y, menu, initialCommandTarget);
+			#endif
+
+			return true;
 		}
 
 		/// <summary>

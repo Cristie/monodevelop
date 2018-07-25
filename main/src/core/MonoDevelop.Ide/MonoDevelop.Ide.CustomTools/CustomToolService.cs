@@ -38,6 +38,8 @@ using MonoDevelop.Ide.Extensions;
 using MonoDevelop.Ide.Tasks;
 using MonoDevelop.Projects;
 using System.Threading.Tasks;
+using MonoDevelop.Ide.Gui;
+using MonoDevelop.Ide.Gui.Pads;
 
 namespace MonoDevelop.Ide.CustomTools
 {
@@ -166,13 +168,7 @@ namespace MonoDevelop.Ide.CustomTools
 			//we could emit a warning but this would get very annoying for Xamarin Forms + SAP
 			//in future we could consider running the MSBuild generator in context of every referencing project
 			if (tool is MSBuildCustomTool) {
-				if (!project.SupportsBuild ()) {
-					return false;
-				}
-				bool byDefault, require;
-				MonoDevelop.Projects.MSBuild.MSBuildProjectService.CheckHandlerUsesMSBuildEngine (project, out byDefault, out require);
-				var usesMSBuild = require || (project.UseMSBuildEngine ?? byDefault);
-				if (!usesMSBuild) {
+				if (!project.SupportsBuild () || !project.MSBuildProject.UseMSBuildEngine) {
 					return false;
 				}
 			}
@@ -221,7 +217,7 @@ namespace MonoDevelop.Ide.CustomTools
 					errors++;
 				}
 
-				//check that we can process further. If UpdateCompleted returns `true` this means no errors or non-fatal errors occured
+				//check that we can process further. If UpdateCompleted returns `true` this means no errors or non-fatal errors occurred
 				if (UpdateCompleted (monitor, file, genFile, result, true) && fileEnumerator.MoveNext ())
 					await Update (monitor, fileEnumerator, force, succeeded, warnings, errors);
 				else
@@ -265,6 +261,8 @@ namespace MonoDevelop.Ide.CustomTools
 		{
 			Update (file, file.Project, force);
 		}
+
+		static WeakReference<Pad> monitorPad;
 
 		public static async void Update (ProjectFile file, Project project, bool force)
 		{
@@ -316,7 +314,24 @@ namespace MonoDevelop.Ide.CustomTools
 			// Execute the generator
 
 			Exception error = null;
-			var monitor = IdeApp.Workbench.ProgressMonitors.GetToolOutputProgressMonitor (false).WithCancellationSource (cs);
+
+			// Share the one pad for all Tool output.
+			Pad pad = null;
+
+			if (monitorPad != null) {
+				monitorPad.TryGetTarget (out pad);
+			}
+
+			if (pad == null) {
+				pad = IdeApp.Workbench.ProgressMonitors.CreateMonitorPad ("MonoDevelop.Ide.ToolOutput", GettextCatalog.GetString ("Tool Output"),
+				                                                                 Stock.PadExecute, false, true, true);
+				pad.Visible = true;
+				((DefaultMonitorPad) pad.Content).ClearOnBeginProgress = false;
+
+				monitorPad = new WeakReference<Pad> (pad);
+			}
+			var monitor = ((DefaultMonitorPad) pad.Content).BeginProgress (GettextCatalog.GetString ("Tool Output"));
+			monitor.WithCancellationSource (cs);
 
 			try {
 				monitor.BeginTask (GettextCatalog.GetString ("Running generator '{0}' on file '{1}'...", file.Generator, file.Name), 1);
@@ -427,9 +442,6 @@ namespace MonoDevelop.Ide.CustomTools
 
 			if (result.GeneratedFilePath.IsNullOrEmpty || !File.Exists (result.GeneratedFilePath))
 				return true;
-
-			// broadcast a change event so text editors etc reload the file
-			FileService.NotifyFileChanged (result.GeneratedFilePath);
 
 			// add file to project, update file properties, etc
 			Gtk.Application.Invoke (async (o, args) => {

@@ -53,25 +53,27 @@ namespace MonoDevelop.VersionControl
 				);
 			}
 
+			AlertButton AskForCheckoutPath ()
+			{
+				return MessageService.AskQuestion (
+					GettextCatalog.GetString ("Checkout path is not empty. Do you want to delete its contents?"),
+					path,
+					AlertButton.Cancel,
+					AlertButton.Ok);
+			}
+
 			protected override void Run ()
 			{
 				if (System.IO.Directory.Exists (path) && System.IO.Directory.EnumerateFileSystemEntries (path).Any ()) {
-					if (MessageService.AskQuestion (GettextCatalog.GetString (
-							"Checkout path is not empty. Do you want to delete its contents?"),
-							path,
-							AlertButton.Cancel,
-							AlertButton.Ok) == AlertButton.Cancel)
+					var result = Runtime.RunInMainThread (() => AskForCheckoutPath ()).Result;
+					if (result == AlertButton.Cancel)
 						return;
+
 					FileService.DeleteDirectory (path);
 					FileService.CreateDirectory (path);
 				}
 
-				try {
-					vc.Checkout (path, null, true, Monitor);
-				} catch (VersionControlException e) {
-					Monitor.ReportError (e.Message, null);
-					return;
-				}
+				vc.Checkout (path, null, true, Monitor);
 
 				if (Monitor.CancellationToken.IsCancellationRequested) {
 					Monitor.ReportSuccess (GettextCatalog.GetString ("Checkout operation cancelled"));

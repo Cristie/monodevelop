@@ -41,13 +41,21 @@ using MonoDevelop.Ide.TypeSystem;
 using MonoDevelop.Core;
 using MonoDevelop.Ide;
 using System.Threading.Tasks;
+using System.Collections.Generic;
 
 namespace MonoDevelop.CSharpBinding
 {
 	[TestFixture]
-	public class NamedArgumentCompletionTests : TestBase
+	class NamedArgumentCompletionTests : TextEditorExtensionTestBase
 	{
-		class TestCompletionWidget : ICompletionWidget
+		protected override EditorExtensionTestData GetContentData () => EditorExtensionTestData.CSharp;
+
+		protected override IEnumerable<TextEditorExtension> GetEditorExtensions ()
+		{
+			yield return new CSharpCompletionTextEditorExtension ();
+		}
+
+		internal class TestCompletionWidget : ICompletionWidget
 		{
 			DocumentContext documentContext;
 
@@ -86,9 +94,6 @@ namespace MonoDevelop.CSharpBinding
 					TriggerOffset = triggerOffset,
 					TriggerLine = line.LineNumber,
 					TriggerLineOffset = line.Offset,
-					TriggerXCoord = 0,
-					TriggerYCoord = 0,
-					TriggerTextHeight = 0,
 					TriggerWordLength = 0
 				};
 			}
@@ -155,66 +160,42 @@ namespace MonoDevelop.CSharpBinding
 		}
 
 
-		static async Task<Tuple<CSharpCompletionTextEditorExtension,TestViewContent>> Setup (string input)
+		async Task Setup (string input, Func<TextEditorExtensionTestCase, Task> test)
 		{
-			var tww = new TestWorkbenchWindow ();
-			TestViewContent content = new TestViewContent ();
-			tww.ViewContent = content;
-			content.ContentName = "/a.cs";
-			content.Data.MimeType = "text/x-csharp";
-
-			var doc = new MonoDevelop.Ide.Gui.Document (tww);
-
-			var text = input;
+			string text = input;
 			int endPos = text.IndexOf ('$');
 			if (endPos >= 0)
 				text = text.Substring (0, endPos) + text.Substring (endPos + 1);
 
-			content.Text = text;
-			content.CursorPosition = System.Math.Max (0, endPos);
+			using (var testCase = await SetupTestCase (text, Math.Max (0, endPos))) {
+				var doc = testCase.Document;
 
-			var project = MonoDevelop.Projects.Services.ProjectService.CreateProject ("C#");
-			project.Name = "test";
-			project.FileName = "test.csproj";
-			project.Files.Add (new ProjectFile (content.ContentName, BuildAction.Compile));
-
-			var solution = new MonoDevelop.Projects.Solution ();
-			solution.AddConfiguration ("", true);
-			solution.DefaultSolutionFolder.AddItem (project);
-			using (var monitor = new ProgressMonitor ())
-				await TypeSystemService.Load (solution, monitor);
-			content.Project = project;
-			doc.SetProject (project);
-
-			var compExt = new CSharpCompletionTextEditorExtension ();
-			compExt.Initialize (doc.Editor, doc);
-			content.Contents.Add (compExt);
-
-			await doc.UpdateParseDocument ();
-			TypeSystemService.Unload (solution);
-			return Tuple.Create (compExt, content);
+				await doc.UpdateParseDocument ();
+				await test (testCase);
+			}
 		}
 
 		async Task<string> Test(string input, string type, string member, Gdk.Key key = Gdk.Key.Return)
 		{
-			var s = await Setup (input);
-			var ext = s.Item1;
-			TestViewContent content = s.Item2;
+			string result = null;
+			await Setup (input, async testCase => {
+				var ext = testCase.Content.GetContent<CSharpCompletionTextEditorExtension> ();
+				var listWindow = new CompletionListWindow ();
+				var widget = new TestCompletionWidget (ext.Editor, ext.DocumentContext);
+				listWindow.CompletionWidget = widget;
+				listWindow.CodeCompletionContext = widget.CurrentCodeCompletionContext;
+				var sm = await ext.DocumentContext.AnalysisDocument.GetSemanticModelAsync ();
 
-			var listWindow = new CompletionListWindow ();
-			var widget = new TestCompletionWidget (ext.Editor, ext.DocumentContext);
-			listWindow.CompletionWidget = widget;
-			listWindow.CodeCompletionContext = widget.CurrentCodeCompletionContext;
-			var sm = ext.DocumentContext.ParsedDocument.GetAst<SemanticModel> ();
+				var t = sm.Compilation.GetTypeByMetadataName (type);
+				var foundMember = t.GetMembers ().First (m => m.Name == member);
+				var data = new CompletionData (foundMember.Name);
+				data.DisplayFlags |= DisplayFlags.NamedArgument;
+				KeyActions ka = KeyActions.Process;
+				data.InsertCompletionText (listWindow, ref ka, KeyDescriptor.FromGtk (key, (char)key, Gdk.ModifierType.None));
+				result = widget.CompletedWord;
+			});
 
-			var t = sm.Compilation.GetTypeByMetadataName (type);
-			var foundMember = t.GetMembers().First (m => m.Name == member);
-			var data = new CompletionData (foundMember.Name);
-			data.DisplayFlags |= DisplayFlags.NamedArgument;
-			KeyActions ka = KeyActions.Process;
-			data.InsertCompletionText (listWindow, ref ka, KeyDescriptor.FromGtk (key, (char)key, Gdk.ModifierType.None));
-
-			return widget.CompletedWord;
+			return result;
 		}
 
 		[Ignore ("Changed in roslyn completion.")]
@@ -249,6 +230,36 @@ namespace MonoDevelop.CSharpBinding
 			Assert.AreEqual ("foo", completion);
 		}
 
+
+		// Bug 60365 - Escaped keywords autocomplete to the unescaped keyword https://bugzilla.xamarin.com/show_bug.cgi?id=60365
+		[Ignore("Crashes with an accessibility exception")]
+		[Test]
+		public async Task TestBug60365 ()
+		{
+			var text = "@c$";
+			int endPos = text.IndexOf ('$');
+			if (endPos >= 0)
+				text = text.Substring (0, endPos) + text.Substring (endPos + 1);
+
+			using (var testCase = await SetupTestCase (text, Math.Max (0, endPos))) {
+				var doc = testCase.Document;
+				var ext = doc.GetContent<CSharpCompletionTextEditorExtension> ();
+
+				var listWindow = new CompletionListWindow ();
+				var widget = new TestCompletionWidget (ext.Editor, ext.DocumentContext);
+				listWindow.CompletionWidget = widget;
+				listWindow.CodeCompletionContext = widget.CurrentCodeCompletionContext;
+				
+
+				Assert.AreEqual ("@class", ext.Editor.Text);
+
+				var list = await ext.HandleCodeCompletionAsync (widget.CurrentCodeCompletionContext, new CompletionTriggerInfo (CompletionTriggerReason.CharTyped, 'c'));
+				var ka = KeyActions.Complete;
+				list.First (d => d.CompletionText == "class").InsertCompletionText (listWindow, ref ka, KeyDescriptor.Tab);
+
+				await doc.UpdateParseDocument ();
+			}
+		}
 
 	}
 }

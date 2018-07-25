@@ -106,9 +106,10 @@ namespace MonoDevelop.Core.Execution
 		void PostSetStatus (ConnectionStatus s, string message, Exception e = null)
 		{
 			if (syncContext != null) {
-				syncContext.Post (delegate {
-					SetStatus (s, message, e);
-				}, null);
+				syncContext.Post (state => {
+					var (rpc, status, msg, exc) = (ValueTuple<RemoteProcessConnection, ConnectionStatus, string, Exception>)state;
+					rpc.SetStatus (status, msg, exc);
+				}, (this, s, message, e));
 			} else {
 				SetStatus (s, message, e);
 			}
@@ -340,6 +341,8 @@ namespace MonoDevelop.Core.Execution
 
 			if (cs != null) {
 				lock (messageWaiters) {
+					if (disposed)
+						throw new RemoteProcessException ("Not connected");
 					messageWaiters [message.Id] = new MessageRequest {
 						Request = message,
 						TaskSource = cs
@@ -348,6 +351,8 @@ namespace MonoDevelop.Core.Execution
 			}
 
 			lock (messageQueue) {
+				if (disposed)
+					return;
 				messageQueue.Add (message);
 				if (!senderRunning) {
 					senderRunning = true;
@@ -418,8 +423,8 @@ namespace MonoDevelop.Core.Execution
 		{
 			if (message == null)
 				message = "Disconnected from remote process";
-			AbortPendingMessages ();
 			disposed = true;
+			AbortPendingMessages ();
 			processConnectedEvent.TrySetResult (true);
 			if (isAsync)
 				PostSetStatus (ConnectionStatus.Disconnected, message);
@@ -429,12 +434,15 @@ namespace MonoDevelop.Core.Execution
 
 		void AbortPendingMessages ()
 		{
+			List<MessageRequest> messagesToAbort;
+			lock (messageQueue)
 			lock (messageWaiters) {
-				foreach (var m in messageWaiters.Values)
-					NotifyResponse (m, m.Request.CreateErrorResponse ("Connection closed"));
+				messagesToAbort = messageWaiters.Values.ToList ();
 				messageWaiters.Clear ();
 				messageQueue.Clear ();
 			}
+			foreach (var m in messagesToAbort)
+				NotifyResponse (m, m.Request.CreateErrorResponse ("Connection closed"));
 		}
 
 		void StopPinger ()
@@ -465,7 +473,7 @@ namespace MonoDevelop.Core.Execution
 				connection.Close ();
 				connection = null;
 			}
-			process.Cancel ();
+			process?.Cancel ();
 		}
 
 		void OnConnected (IAsyncResult res)

@@ -56,6 +56,7 @@ using MonoDevelop.Components;
 using System.Threading.Tasks;
 using System.Collections.Immutable;
 using MonoDevelop.Core.Instrumentation;
+using MonoDevelop.Ide.Gui.Components;
 
 namespace MonoDevelop.Ide.Gui
 {
@@ -73,6 +74,7 @@ namespace MonoDevelop.Ide.Gui
 		public event EventHandler LayoutChanged;
 		public event EventHandler GuiLocked;
 		public event EventHandler GuiUnlocked;
+		bool fileEventsFrozen;
 		
 		internal void Initialize (ProgressMonitor monitor)
 		{
@@ -97,19 +99,16 @@ namespace MonoDevelop.Ide.Gui
 				IdeApp.Workspace.LoadingUserPreferences += OnLoadingWorkspaceUserPreferences;
 				
 				IdeApp.FocusOut += delegate(object o, EventArgs args) {
-					SaveFileStatus ();
+					if (!fileEventsFrozen) {
+						fileEventsFrozen = true;
+						FileService.FreezeEvents ();
+					}
 				};
 				IdeApp.FocusIn += delegate(object o, EventArgs args) {
-					CheckFileStatus ();
-				};
-
-				IdeApp.ProjectOperations.StartBuild += delegate {
-					SaveFileStatus ();
-				};
-
-				IdeApp.ProjectOperations.EndBuild += delegate {
-					// The file status checks outputs as well.
-					CheckFileStatus ();
+					if (fileEventsFrozen) {
+						fileEventsFrozen = false;
+						FileService.ThawEvents ();
+					}
 				};
 
 				pads = null;	// Make sure we get an up to date pad list.
@@ -127,8 +126,7 @@ namespace MonoDevelop.Ide.Gui
 			var memento = PropertyService.Get (workbenchMemento, new Properties ());
 			Counters.Initialization.Trace ("Setting memento");
 			workbench.Memento = memento;
-			Counters.Initialization.Trace ("Making Visible");
-			RootWindow.Visible = true;
+			Counters.Initialization.Trace ("Setting layout");
 			workbench.CurrentLayout = "Solution";
 			
 			// now we have an layout set notify it
@@ -138,7 +136,8 @@ namespace MonoDevelop.Ide.Gui
 			
 			Counters.Initialization.Trace ("Initializing monitors");
 			monitors.Initialize ();
-			
+
+			Counters.Initialization.Trace ("Making visible");
 			Present ();
 		}
 		
@@ -305,6 +304,20 @@ namespace MonoDevelop.Ide.Gui
 			workbench.Toolbar.HideCommandBar (barId);
 		}
 
+		internal void ShowInfoBar (bool inActiveView, string description, params InfoBarItem[] items)
+		{
+			IInfoBarHost infoBarHost = null;
+			if (inActiveView) {
+				// Maybe for pads also? Not sure if we should.
+				infoBarHost = IdeApp.Workbench.ActiveDocument as IInfoBarHost;
+			}
+
+			if (infoBarHost == null)
+				infoBarHost = IdeApp.Workbench.RootWindow as IInfoBarHost;
+
+			infoBarHost?.AddInfoBar (description, items);
+		}
+
 		internal MonoDevelop.Components.MainToolbar.MainToolbarController Toolbar {
 			get {
 				return workbench.Toolbar;
@@ -394,8 +407,14 @@ namespace MonoDevelop.Ide.Gui
 				GettextCatalog.GetString ("If you don't save, all changes will be permanently lost."),
 				AlertButton.CloseWithoutSave, AlertButton.Cancel, doc.Window.ViewContent.IsUntitled ? AlertButton.SaveAs : AlertButton.Save);
 		}
-		
+
+		[Obsolete("Use CloseAllDocumentsAsync")]
 		public void CloseAllDocuments (bool leaveActiveDocumentOpen)
+		{
+			CloseAllDocumentsAsync (leaveActiveDocumentOpen).Ignore ();
+		}
+
+		public async Task CloseAllDocumentsAsync (bool leaveActiveDocumentOpen)
 		{
 			Document[] docs = new Document [Documents.Count];
 			Documents.CopyTo (docs, 0);
@@ -405,10 +424,10 @@ namespace MonoDevelop.Ide.Gui
 			
 			foreach (Document doc in docs) {
 				if (doc != ActiveDocument)
-					doc.Close ().Ignore();
+					await doc.Close ();
 			}
 			if (!leaveActiveDocumentOpen && ActiveDocument != null)
-				ActiveDocument.Close ().Ignore();
+				await ActiveDocument.Close ();
 		}
 
 		internal Pad ShowPad (PadCodon content)
@@ -559,8 +578,10 @@ namespace MonoDevelop.Ide.Gui
 		{
 			if (string.IsNullOrEmpty (info.FileName))
 				return null;
-			// Ensure that paths like /a/./a.cs are equalized 
-			using (Counters.OpenDocumentTimer.BeginTiming ("Opening file " + info.FileName)) {
+
+			var metadata = CreateOpenDocumentTimerMetadata ();
+
+			using (Counters.OpenDocumentTimer.BeginTiming ("Opening file " + info.FileName, metadata)) {
 				NavigationHistoryService.LogActiveDocument ();
 				Counters.OpenDocumentTimer.Trace ("Look for open document");
 				foreach (Document doc in Documents) {
@@ -604,8 +625,10 @@ namespace MonoDevelop.Ide.Gui
 					true
 				);
 
-				await RealOpenFile (pm, info);
+				bool result = await RealOpenFile (pm, info);
 				pm.Dispose ();
+
+				AddOpenDocumentTimerMetadata (metadata, info, result);
 				
 				if (info.NewContent != null) {
 					Counters.OpenDocumentTimer.Trace ("Wrapping document");
@@ -625,12 +648,34 @@ namespace MonoDevelop.Ide.Gui
 			}
 		}
 
+		OpenDocumentMetadata CreateOpenDocumentTimerMetadata ()
+		{
+			var metadata = new OpenDocumentMetadata {
+				ResultString = "None"
+			};
+
+			return metadata;
+		}
+
+		void AddOpenDocumentTimerMetadata (OpenDocumentMetadata metadata, FileOpenInformation info, bool result)
+		{
+			if (info.NewContent != null)
+				metadata.EditorType = info.NewContent.GetType ().FullName;
+			if (info.Project != null)
+				metadata.OwnerProjectGuid = info.Project?.ItemId;
+			
+			metadata.Extension = info.FileName.Extension;
+			metadata.ResultString = result ? "Success" : "Failure";
+		}
+
 		async Task<ViewContent> BatchOpenDocument (ProgressMonitor monitor, FilePath fileName, Project project, int line, int column, DockNotebook dockNotebook)
 		{
 			if (string.IsNullOrEmpty (fileName))
 				return null;
-			
-			using (Counters.OpenDocumentTimer.BeginTiming ("Batch opening file " + fileName)) {
+
+			var metadata = CreateOpenDocumentTimerMetadata ();
+
+			using (Counters.OpenDocumentTimer.BeginTiming ("Batch opening file " + fileName, metadata)) {
 				var openFileInfo = new FileOpenInformation (fileName, project) {
 					Options = OpenDocumentOptions.OnlyInternalViewer,
 					Line = line,
@@ -638,7 +683,9 @@ namespace MonoDevelop.Ide.Gui
 					DockNotebook = dockNotebook
 				};
 				
-				await RealOpenFile (monitor, openFileInfo);
+				bool result = await RealOpenFile (monitor, openFileInfo);
+
+				AddOpenDocumentTimerMetadata (metadata, openFileInfo, result);
 				
 				return openFileInfo.NewContent;
 			}
@@ -819,11 +866,13 @@ namespace MonoDevelop.Ide.Gui
 		{
 			if (window == null) return null;
 			Document doc = FindDocument (window);
-			if (doc != null) return doc;
+			if (doc != null)
+				return doc;
 			doc = new Document (window);
 			window.Closing += OnWindowClosing;
 			window.Closed += OnWindowClosed;
 			documents = documents.Add (doc);
+			WatchDocument (doc);
 
 			doc.OnDocumentAttached ();
 			OnDocumentOpened (new DocumentEventArgs (doc));
@@ -890,12 +939,55 @@ namespace MonoDevelop.Ide.Gui
 		{
 			IWorkbenchWindow window = (IWorkbenchWindow) sender;
 			var doc = FindDocument (window);
+			if (doc == null)
+				return;
+
 			window.Closing -= OnWindowClosing;
 			window.Closed -= OnWindowClosed;
 			documents = documents.Remove (doc);
+			UnwatchDocument (doc);
 
 			OnDocumentClosed (doc);
 			doc.DisposeDocument ();
+		}
+
+		void WatchDocument (Document doc)
+		{
+			if (doc.IsFile) {
+				if (doc.Window.ViewContent != null)
+					doc.Window.ViewContent.ContentNameChanged += OnContentNameChanged;
+				WatchDirectories ();
+			}
+		}
+
+		void UnwatchDocument (Document doc)
+		{
+			if (doc.IsFile) {
+				if (doc.Window.ViewContent != null)
+					doc.Window.ViewContent.ContentNameChanged -= OnContentNameChanged;
+				WatchDirectories ();
+			}
+		}
+
+		void OnContentNameChanged (object sender, EventArgs e)
+		{
+			// Refresh file watcher.
+			WatchDirectories ();
+		}
+
+		object directoryWatchId = new object ();
+		void WatchDirectories ()
+		{
+			HashSet<FilePath> directories = null;
+			foreach (Document doc in documents) {
+				if (doc.IsFile) {
+					if (directories == null)
+						directories = new HashSet<FilePath> ();
+					directories.Add (doc.FileName.ParentDirectory);
+				}
+			}
+
+			FileWatcherService.WatchDirectories (directoryWatchId, directories).Ignore ();
 		}
 		
 		// When looking for the project to which the file belongs, look first
@@ -971,7 +1063,12 @@ namespace MonoDevelop.Ide.Gui
 			
 			IDisplayBinding binding = null;
 			IViewDisplayBinding viewBinding = null;
-			Project project = openFileInfo.Project ?? GetProjectContainingFile (fileName);
+			if (openFileInfo.Project == null) {
+				// Set the project if one can be found. The project on the FileOpenInformation
+				// is used to add project metadata to the OpenDocumentTimer counter.
+				openFileInfo.Project = GetProjectContainingFile (fileName);
+			}
+			Project project = openFileInfo.Project;
 			
 			if (openFileInfo.DisplayBinding != null) {
 				binding = viewBinding = openFileInfo.DisplayBinding;
@@ -1239,99 +1336,6 @@ namespace MonoDevelop.Ide.Gui
 			workbench.UnlockActiveWindowChangeEvent ();
 		}
 
-		List<FileData> fileStatus;
-		SemaphoreSlim fileStatusLock = new SemaphoreSlim (1, 1);
-		// http://msdn.microsoft.com/en-us/library/system.io.file.getlastwritetimeutc(v=vs.110).aspx
-		static DateTime NonExistentFile = new DateTime(1601, 1, 1);
-		internal void SaveFileStatus ()
-		{
-//			DateTime t = DateTime.Now;
-			List<FilePath> files = new List<FilePath> (GetKnownFiles ());
-			fileStatus = new List<FileData> (files.Count);
-//			Console.WriteLine ("SaveFileStatus(0) " + (DateTime.Now - t).TotalMilliseconds + "ms " + files.Count);
-			
-			Task.Run (async delegate {
-//				t = DateTime.Now;
-				try {
-					await fileStatusLock.WaitAsync ().ConfigureAwait (false);
-					if (fileStatus == null)
-						return;
-					foreach (FilePath file in files) {
-						try {
-							DateTime ft = File.GetLastWriteTimeUtc (file);
-							FileData fd = new FileData (file, ft != NonExistentFile ? ft : DateTime.MinValue);
-							fileStatus.Add (fd);
-						} catch {
-							// Ignore						}
-					}
-				} finally {
-					fileStatusLock.Release ();
-				}
-//				Console.WriteLine ("SaveFileStatus " + (DateTime.Now - t).TotalMilliseconds + "ms " + fileStatus.Count);
-			});
-		}
-		
-		internal void CheckFileStatus ()
-		{
-			if (fileStatus == null)
-				return;
-			
-			Task.Run (async delegate {
-				try {
-//					DateTime t = DateTime.Now;
-
-					await fileStatusLock.WaitAsync ().ConfigureAwait (false);
-					if (fileStatus == null)
-						return;
-					List<FilePath> modified = new List<FilePath> (fileStatus.Count);
-					foreach (FileData fd in fileStatus) {
-						try {
-							DateTime ft = File.GetLastWriteTimeUtc (fd.File);
-							if (ft != NonExistentFile) {
-								if (ft != fd.TimeUtc)
-									modified.Add (fd.File);
-							} else if (fd.TimeUtc != DateTime.MinValue) {
-								FileService.NotifyFileRemoved (fd.File);
-							}
-						} catch {
-							// Ignore
-						}
-					}
-					if (modified.Count > 0)
-						FileService.NotifyFilesChanged (modified);
-
-//					Console.WriteLine ("CheckFileStatus " + (DateTime.Now - t).TotalMilliseconds + "ms " + fileStatus.Count);
-					fileStatus = null;
-				} finally {
-					fileStatusLock.Release ();
-				}
-			});
-		}
-		
-		IEnumerable<FilePath> GetKnownFiles ()
-		{
-			foreach (WorkspaceItem item in IdeApp.Workspace.Items) {
-				foreach (FilePath file in item.GetItemFiles (true))
-					yield return file;
-			}
-			foreach (Document doc in documents) {
-				if (!doc.HasProject && doc.IsFile)
-					yield return doc.FileName;
-			}
-		}
-		
-		struct FileData
-		{
-			public FileData (FilePath file, DateTime timeUtc)
-			{
-				this.File = file;
-				this.TimeUtc = timeUtc;
-			}
-			
-			public FilePath File;
-			public DateTime TimeUtc;
-		}
-		
 		void OnDocumentOpened (DocumentEventArgs e)
 		{
 			try {
@@ -1648,5 +1652,34 @@ namespace MonoDevelop.Ide.Gui
 		Default = BringToFront | CenterCaretLine | HighlightCaretLine | TryToReuseViewer,
 		Debugger = BringToFront | CenterCaretLine | TryToReuseViewer,
 		DefaultInternal = Default | OnlyInternalViewer,
+	}
+
+	class OpenDocumentMetadata : CounterMetadata
+	{
+		public OpenDocumentMetadata ()
+		{
+		}
+
+		// CounterMetadata already has a Result property which isn't a string
+		// but we can overwrite the property directly in the dictionary
+		public string ResultString {
+			get => (string)Properties["Result"];
+			set => Properties["Result"] = value;
+		}
+
+		public string EditorType {
+			get => GetProperty<string> ();
+			set => SetProperty (value);
+		}
+
+		public string OwnerProjectGuid {
+			get => GetProperty<string> ();
+			set => SetProperty (value);
+		}
+
+		public string Extension {
+			get => GetProperty<string> ();
+			set => SetProperty (value);
+		}
 	}
 }

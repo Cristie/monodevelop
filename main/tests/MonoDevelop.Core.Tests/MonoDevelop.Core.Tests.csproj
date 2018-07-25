@@ -9,7 +9,7 @@
     <AssemblyName>MonoDevelop.Core.Tests</AssemblyName>
     <TestRunnerCommand>..\..\build\bin\mdtool.exe</TestRunnerCommand>
     <TestRunnerArgs>run-md-tests</TestRunnerArgs>
-    <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
+    <TargetFrameworkVersion>$(MDFrameworkVersion)</TargetFrameworkVersion>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -34,15 +34,26 @@
     <Reference Include="System.Xml" />
     <Reference Include="Microsoft.CSharp" />
     <Reference Include="Microsoft.CodeAnalysis.CSharp">
-      <HintPath>..\..\packages\Microsoft.CodeAnalysis.CSharp.2.3.2\lib\netstandard1.3\Microsoft.CodeAnalysis.CSharp.dll</HintPath>
+      <HintPath>..\..\packages\Microsoft.CodeAnalysis.CSharp.$(NuGetVersionRoslyn)\lib\netstandard1.3\Microsoft.CodeAnalysis.CSharp.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="System.ValueTuple">
-      <HintPath>..\..\packages\System.ValueTuple.4.3.1\lib\netstandard1.0\System.ValueTuple.dll</HintPath>
+      <HintPath>..\..\packages\System.ValueTuple.4.4.0\lib\netstandard1.0\System.ValueTuple.dll</HintPath>
+    </Reference>
+    <Reference Include="Mono.Cecil">
+      <HintPath>..\..\packages\Mono.Cecil.0.10.0-beta7\lib\net40\Mono.Cecil.dll</HintPath>
+    </Reference>
+    <Reference Include="Mono.Cecil.Mdb">
+      <HintPath>..\..\packages\Mono.Cecil.0.10.0-beta7\lib\net40\Mono.Cecil.Mdb.dll</HintPath>
+    </Reference>
+    <Reference Include="Mono.Cecil.Pdb">
+      <HintPath>..\..\packages\Mono.Cecil.0.10.0-beta7\lib\net40\Mono.Cecil.Pdb.dll</HintPath>
+    </Reference>
+    <Reference Include="Mono.Cecil.Rocks">
+      <HintPath>..\..\packages\Mono.Cecil.0.10.0-beta7\lib\net40\Mono.Cecil.Rocks.dll</HintPath>
     </Reference>
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Test.cs" />
     <Compile Include="MonoDevelop.Core\BacktrackingStringMatcherTests.cs" />
     <Compile Include="MonoDevelop.Core\BaseCredentialsProviderTests.cs" />
     <Compile Include="MonoDevelop.Core\CoreExtensionsTests.cs" />
@@ -94,12 +105,15 @@
     <Compile Include="MonoDevelop.Projects\NetStandardProjectTests.cs" />
     <Compile Include="MonoDevelop.Projects\BuilderManagerTests.cs" />
     <Compile Include="MonoDevelop.Core.Execution\BinaryMessageTests.cs" />
+    <Compile Include="MonoDevelop.Core\ProgressMonitorTests.cs" />
+    <Compile Include="MonoDevelop.Projects\DotNetCoreFileWatcherTests.cs" />
+    <Compile Include="MonoDevelop.Projects\FileWatcherTests.cs" />
+    <Compile Include="MonoDevelop.Core\InstrumentationTests.cs" />
+    <Compile Include="MonoDevelop.FSW\PathTreeNodeTests.cs" />
+    <Compile Include="MonoDevelop.FSW\PathTreeTests.cs" />
+    <Compile Include="MonoDevelop.Projects\ExtensionChainTests.cs" />
   </ItemGroup>
   <ItemGroup>
-    <Folder Include="MonoDevelop.Core\" />
-    <Folder Include="MonoDevelop.Core.Assemblies\" />
-    <Folder Include="MonoDevelop.Projects\" />
-    <Folder Include="MonoDevelop.Core.Execution\" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\core\MonoDevelop.Core\MonoDevelop.Core.csproj">
@@ -120,9 +134,17 @@
       <Project>{D12F0F7B-8DE3-43EC-BA49-41052D065A9B}</Project>
       <Name>GuiUnit_NET_4_5</Name>
     </ProjectReference>
+    <ProjectReference Include="..\MonoDevelop.Core.Tests.Addin\MonoDevelop.Core.Tests.Addin.csproj">
+      <Project>{CF789E43-7AAF-4690-BA32-ABD75DEEB087}</Project>
+      <Name>MonoDevelop.Core.Tests.Addin</Name>
+      <ReferenceOutputAssembly>False</ReferenceOutputAssembly>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="MonoDevelop.FSW\" />
   </ItemGroup>
   <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
 </Project>

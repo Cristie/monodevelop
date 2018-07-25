@@ -45,10 +45,10 @@ namespace MonoDevelop.CSharp
 
 		protected override async Task<IEnumerable<NavigationSegment>> RequestLinksAsync (int offset, int length, CancellationToken token)
 		{
-			var parsedDocument = DocumentContext.ParsedDocument;
-			if (parsedDocument == null)
+			var analysisDocument = DocumentContext.AnalysisDocument;
+			if (analysisDocument == null)
 				return Enumerable.Empty<NavigationSegment> ();
-			var model = parsedDocument.GetAst<SemanticModel> ();
+			var model = await analysisDocument.GetSemanticModelAsync(token);
 			if (model == null)
 				return Enumerable.Empty<NavigationSegment> ();
 			return await Task.Run (async delegate {
@@ -114,21 +114,6 @@ namespace MonoDevelop.CSharp
 			static bool IsNavigatable (SymbolInfo info)
 			{
 				return info.Symbol != null && info.Symbol.Kind != SymbolKind.Namespace;
-			}
-
-			public override void VisitMemberAccessExpression (MemberAccessExpressionSyntax node)
-			{
-				var info = model.GetSymbolInfo (node); 
-				if (IsNavigatable(info)) {
-					result.Add (new NavigationSegment (node.Name.Span.Start, node.Name.Span.Length, delegate {
-						GLib.Timeout.Add (50, delegate {
-							RefactoringService.RoslynJumpToDeclaration (info.Symbol, documentContext.Project);
-							return false;
-						});
-					})); 
-				}
-
-				base.VisitMemberAccessExpression (node);
 			}
 			 
 			public override void VisitBlock (BlockSyntax node)

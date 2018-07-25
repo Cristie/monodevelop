@@ -33,6 +33,7 @@ using MonoDevelop.Ide.Fonts;
 using MonoDevelop.Ide.Editor;
 using MonoDevelop.Ide.Editor.Highlighting;
 using System.Linq;
+using MonoDevelop.Ide.RoslynServices.Options;
 
 namespace MonoDevelop.Ide
 {
@@ -66,8 +67,10 @@ namespace MonoDevelop.Ide
 	
 	public class IdePreferences
 	{
+		internal RoslynPreferences Roslyn { get; }
 		internal IdePreferences ()
 		{
+			Roslyn = new RoslynPreferences ();
 		}
 
 		public readonly ConfigurationProperty<bool> EnableInstrumentation = Runtime.Preferences.EnableInstrumentation;
@@ -139,8 +142,13 @@ namespace MonoDevelop.Ide
 		public readonly ConfigurationProperty<bool> AddImportedItemsToCompletionList = ConfigurationProperty.Create ("AddImportedItemsToCompletionList", false);
 		public readonly ConfigurationProperty<bool> IncludeKeywordsInCompletionList = ConfigurationProperty.Create ("IncludeKeywordsInCompletionList", true);
 		public readonly ConfigurationProperty<bool> IncludeCodeSnippetsInCompletionList = ConfigurationProperty.Create ("IncludeCodeSnippetsInCompletionList", true);
+
+		[Obsolete ("Unused use CompletionOptionsHideAdvancedMembers")]
 		public readonly ConfigurationProperty<bool> FilterCompletionListByEditorBrowsable = ConfigurationProperty.Create ("FilterCompletionListByEditorBrowsable", true);
+		[Obsolete ("Unused use CompletionOptionsHideAdvancedMembers")]
 		public readonly ConfigurationProperty<bool> IncludeEditorBrowsableAdvancedMembers = ConfigurationProperty.Create ("IncludeEditorBrowsableAdvancedMembers", true);
+
+		public readonly ConfigurationProperty<bool> CompletionOptionsHideAdvancedMembers = ConfigurationProperty.Create ("CompletionOptionsHideAdvancedMembers", true);
 
 		public Theme UserInterfaceTheme {
 			get { return MonoDevelop.Components.IdeTheme.UserInterfaceTheme; }

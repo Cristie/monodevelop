@@ -41,6 +41,7 @@ namespace MonoDevelop.DotNetCore
 		bool hasAssemblyName;
 		bool hasDescription;
 		CompileTarget defaultCompileTarget = CompileTarget.Library;
+		TargetFrameworkMoniker targetFrameworkMoniker;
 
 		public string ToolsVersion { get; private set; }
 		public bool IsOutputTypeDefined { get; private set; }
@@ -74,13 +75,15 @@ namespace MonoDevelop.DotNetCore
 				project.ToolsVersion = "15.0";
 		}
 
-		public void ReadProject (MSBuildProject project)
+		public void ReadProject (MSBuildProject project, TargetFrameworkMoniker framework)
 		{
 			IsOutputTypeDefined = project.IsOutputTypeDefined ();
 			targetFrameworks = project.GetTargetFrameworks ().ToList ();
 			hasRootNamespace = project.HasGlobalProperty ("RootNamespace");
 			hasAssemblyName = project.HasGlobalProperty ("AssemblyName");
 			hasDescription = project.HasGlobalProperty ("Description");
+
+			targetFrameworkMoniker = framework;
 
 			ReadDefaultCompileTarget (project);
 		}
@@ -93,7 +96,7 @@ namespace MonoDevelop.DotNetCore
 			globalPropertyGroup.RemoveProperty ("TargetFrameworkVersion");
 
 			if (!IsOutputTypeDefined)
-				globalPropertyGroup.RemoveProperty ("OutputType");
+				RemoveOutputTypeIfHasDefaultValue (project, globalPropertyGroup);
 
 			RemoveMSBuildProjectNameDerivedProperties (globalPropertyGroup);
 
@@ -114,6 +117,16 @@ namespace MonoDevelop.DotNetCore
 			}
 		}
 
+		static void RemoveOutputTypeIfHasDefaultValue (MSBuildProject project, MSBuildPropertyGroup globalPropertyGroup)
+		{
+			string outputType = project.EvaluatedProperties.GetValue ("OutputType");
+			if (string.IsNullOrEmpty (outputType)) {
+				globalPropertyGroup.RemoveProperty ("OutputType");
+			} else {
+				globalPropertyGroup.RemovePropertyIfHasDefaultValue ("OutputType", outputType);
+			}
+		}
+
 		void RemoveMSBuildProjectNameDerivedProperties (MSBuildPropertyGroup globalPropertyGroup)
 		{
 			string msbuildProjectName = globalPropertyGroup.ParentProject.FileName.FileNameWithoutExtension;
@@ -127,8 +140,22 @@ namespace MonoDevelop.DotNetCore
 
 		void UpdateTargetFramework (MSBuildProject project, TargetFrameworkMoniker framework)
 		{
-			string shortFrameworkName = framework.GetShortFrameworkName ();
+			if (targetFrameworkMoniker == framework)
+				return;
+
+			string shortFrameworkName = null;
+			DotNetCoreShortTargetFramework shortFramework = null;
+
 			string existingFramework = targetFrameworks.FirstOrDefault ();
+			bool identifiersMatch = targetFrameworkMoniker.Identifier == framework.Identifier;
+
+			if (identifiersMatch && DotNetCoreShortTargetFramework.TryParse (existingFramework, out shortFramework)) {
+				shortFramework.Update (framework);
+				shortFrameworkName = shortFramework.ToString ();
+			} else {
+				shortFrameworkName = framework.GetShortFrameworkName ();
+			}
+
 			if (existingFramework == shortFrameworkName)
 				return;
 
@@ -137,6 +164,7 @@ namespace MonoDevelop.DotNetCore
 			else
 				targetFrameworks[0] = shortFrameworkName;
 
+			targetFrameworkMoniker = framework;
 			project.UpdateTargetFrameworks (targetFrameworks);
 		}
 

@@ -64,7 +64,10 @@ namespace Microsoft.VisualStudio.Platform
         internal IBufferTagAggregatorFactoryService BufferTagAggregatorFactoryService { get; private set; }
 
         [Import]
-        internal IClassifierAggregatorService ClassifierAggregatorService { get; private set; }
+		internal IClassifierAggregatorService ClassifierAggregatorService { get; private set; }
+
+		[Import]
+		internal IViewClassifierAggregatorService ViewClassifierAggregatorService { get; private set; }
     }
 
     public interface IMimeToContentTypeRegistryService
@@ -94,7 +97,7 @@ namespace Microsoft.VisualStudio.Platform
                 return mimeType;
             }
 
-            return null;
+            return (ContentTypeRegistryService as IContentTypeRegistryService2).GetMimeType (type);
         }
 
         public IContentType GetContentType(string type)
@@ -105,7 +108,7 @@ namespace Microsoft.VisualStudio.Platform
                 return contentType;
             }
 
-            return null;
+            return (ContentTypeRegistryService as IContentTypeRegistryService2).GetContentTypeForMimeType (type);
         }
 
         public void LinkTypes(string mimeType, IContentType contentType)
@@ -136,14 +139,6 @@ namespace Microsoft.VisualStudio.Platform
 		{
 			LinkTypes ("text/plain", "text");
 			LinkTypes ("text/x-csharp", "csharp");
-
-			if (this.ContentTypeRegistryService.GetContentType ("css") != null) {
-				LinkTypes ("text/x-css", "css");
-				LinkTypes ("text/x-less-web", "LESS");
-				LinkTypes ("text/x-scss-web", "SCSS");
-				LinkTypes ("text/x-html", "htmlx");
-				LinkTypes ("text/x-json", "JSON");
-			}
 		}
 
 		Tuple<ImmutableDictionary<string, IContentType>, ImmutableDictionary<IContentType, string>> maps = Tuple.Create(ImmutableDictionary<string, IContentType>.Empty, ImmutableDictionary<IContentType, string>.Empty);

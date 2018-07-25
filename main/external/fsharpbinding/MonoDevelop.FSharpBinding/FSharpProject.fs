@@ -2,6 +2,7 @@
 
 open System
 open System.IO
+open System.Threading.Tasks
 open MonoDevelop.Core
 open MonoDevelop.Core.Serialization
 open MonoDevelop.Projects
@@ -347,11 +348,10 @@ type FSharpProject() as self =
         }
 
     override x.OnReevaluateProject(monitor) =
-        x.ReevaluateProject monitor |> Async.startAsPlainTask
+        x.ReevaluateProject monitor |> StartAsyncAsTask monitor.CancellationToken :> Task
 
     override x.OnDispose () =
-        //if not self.Loading then invalidateProjectFile()
-
+        languageService.HideStatusIcon (string self.FileName.FullPath)
         // FIXME: is it correct to do it every time a project is disposed?
         //Should only be done on solution close
         //langServ.ClearLanguageServiceRootCachesAndCollectAndFinalizeAllTransients()

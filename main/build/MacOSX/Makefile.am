@@ -23,7 +23,7 @@ EXTRA_DIST = dmg-bg.png DS_Store Info.plist.in make-dmg-bundle.sh render.cs
 
 MONOSTUB_EXTRA_SOURCES = monostub-utils.h
 
-all: monostub monostub-test
+all: monostub monostub-nogui monostub-test libsystemnative.dylib
 
 render.exe: render.cs
 	mcs -r:System.Drawing render.cs
@@ -31,11 +31,26 @@ render.exe: render.cs
 dmg: render.exe app
 	./make-dmg-bundle.sh
 
-monostub: monostub.mm $(MONOSTUB_EXTRA_SOURCES) $(MONOSTUB_STATIC_LINK)
-	clang++ $(EXTERN_C_XM_REGISTRAR_DEFINE) $(MONOSTUB_DEFINES) -Wall -mmacosx-version-min=10.10 -m$(MONOSTUB_ARCH) -o $@ monostub.mm -framework AppKit -framework Quartz $(MONOSTUB_STATIC_LINK) -undefined dynamic_lookup
-#	gcc -Wall -mmacosx-version-min=10.10 -m$(MONOSTUB_ARCH) -o $@ monostub.m -framework AppKit -isysroot $(SDK_PATH)
-	cp monostub ../bin/MonoDevelop
-	cp monostub ../bin/mdtool
+System_Native.o: System_Native.cpp
+	g++ -std=c++14 -c -Wall -mmacosx-version-min=10.10 -o $@ $^
+
+libsystemnative.dylib: System_Native.o
+	clang++ -dynamiclib -undefined dynamic_lookup $^ -o $@
+	cp $@ ../bin
+
+monostub.o: monostub.mm $(MONOSTUB_EXTRA_SOURCES)
+	g++ -g $(EXTERN_C_XM_REGISTRAR_DEFINE) $(MONOSTUB_DEFINES) -c -Wall -mmacosx-version-min=10.10 -m$(MONOSTUB_ARCH) -o $@ monostub.mm
+
+monostub-nogui.o: monostub.mm $(MONOSTUB_EXTRA_SOURCES)
+	g++ -g $(EXTERN_C_XM_REGISTRAR_DEFINE) $(MONOSTUB_DEFINES) -DNOGUI -c -Wall -mmacosx-version-min=10.10 -m$(MONOSTUB_ARCH) -o $@ monostub.mm
+
+monostub: monostub.o $(MONOSTUB_STATIC_LINK)
+	clang++ -g -Wall -mmacosx-version-min=10.10 -m$(MONOSTUB_ARCH) -o $@ -Wl,-all_load $^ -framework AppKit -framework Quartz -undefined dynamic_lookup
+	cp $@ ../bin/MonoDevelop
+
+monostub-nogui: monostub-nogui.o $(MONOSTUB_STATIC_LINK)
+	clang++ -g -Wall -mmacosx-version-min=10.10 -m$(MONOSTUB_ARCH) -o $@ -Wl,-all_load $^ -framework AppKit -framework Quartz -undefined dynamic_lookup
+	cp $@ ../bin/mdtool
 
 monostub-test: monostub-test.m $(MONOSTUB_EXTRA_SOURCES)
 	gcc -g -Wall -mmacosx-version-min=10.10 -m$(MONOSTUB_ARCH) -o $@ monostub-test.m -framework AppKit
@@ -44,6 +59,7 @@ monostub-test: monostub-test.m $(MONOSTUB_EXTRA_SOURCES)
 clean-local:
 	rm -rf MonoDevelop.app
 	rm -f MonoDevelop*.dmg
+	rm -f *.o
 
 app: monostub monostub-test
 	@echo ""

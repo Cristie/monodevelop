@@ -1,104 +1,20 @@
-<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="..\..\..\..\MonoDevelop.props" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <ProjectGuid>{0413DB7D-8B35-423F-9752-D75C9225E7DE}</ProjectGuid>
-    <OutputType>Library</OutputType>
-    <RootNamespace>MonoDevelop.VersionControl.Git</RootNamespace>
-    <AssemblyName>MonoDevelop.VersionControl.Git</AssemblyName>
-    <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DebugSymbols>True</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>False</Optimize>
+    <TargetFrameworkVersion>$(MDFrameworkVersion)</TargetFrameworkVersion>
     <OutputPath>..\..\..\..\build\AddIns\VersionControl</OutputPath>
-    <DefineConstants>DEBUG</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <ConsolePause>False</ConsolePause>
-    <NoWarn>1591;1573</NoWarn>
-    <DocumentationFile>..\..\..\..\build\AddIns\VersionControl\MonoDevelop.VersionControl.Git.xml</DocumentationFile>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>..\..\..\..\build\AddIns\VersionControl</OutputPath>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <ConsolePause>False</ConsolePause>
-    <DebugSymbols>true</DebugSymbols>
-    <NoWarn>1591;1573</NoWarn>
-    <DocumentationFile>..\..\..\..\build\AddIns\VersionControl\MonoDevelop.VersionControl.Git.xml</DocumentationFile>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'DebugMac|AnyCPU' ">
-    <DebugSymbols>True</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>False</Optimize>
-    <OutputPath>..\..\..\..\build\AddIns\VersionControl</OutputPath>
-    <DefineConstants>DEBUG</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <ConsolePause>False</ConsolePause>
-    <NoWarn>1591;1573</NoWarn>
-    <DocumentationFile>..\..\..\..\build\AddIns\VersionControl\MonoDevelop.VersionControl.Git.xml</DocumentationFile>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'DebugGnome|AnyCPU' ">
-    <DebugSymbols>True</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>False</Optimize>
-    <OutputPath>..\..\..\..\build\AddIns\VersionControl</OutputPath>
-    <DefineConstants>DEBUG</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <ConsolePause>False</ConsolePause>
-    <NoWarn>1591;1573</NoWarn>
-    <DocumentationFile>..\..\..\..\build\AddIns\VersionControl\MonoDevelop.VersionControl.Git.xml</DocumentationFile>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'DebugWin32|AnyCPU' ">
-    <DebugSymbols>True</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>False</Optimize>
-    <OutputPath>..\..\..\..\build\AddIns\VersionControl</OutputPath>
-    <DefineConstants>DEBUG</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <ConsolePause>False</ConsolePause>
-    <DocumentationFile>..\..\..\..\build\AddIns\VersionControl\MonoDevelop.VersionControl.Git.xml</DocumentationFile>
-    <NoWarn>1591</NoWarn>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'ReleaseWin32|AnyCPU' ">
-    <Optimize>true</Optimize>
-    <OutputPath>..\..\..\..\build\AddIns\VersionControl</OutputPath>
-    <WarningLevel>4</WarningLevel>
-    <DebugSymbols>true</DebugSymbols>
-    <NoWarn>1591</NoWarn>
-    <DocumentationFile>..\..\..\..\build\AddIns\VersionControl\MonoDevelop.VersionControl.Git.xml</DocumentationFile>
-    <DebugType>pdbonly</DebugType>
-    <ConsolePause>false</ConsolePause>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'ReleaseMac|AnyCPU' ">
-    <Optimize>true</Optimize>
-    <OutputPath>..\..\..\..\build\AddIns\VersionControl</OutputPath>
-    <WarningLevel>4</WarningLevel>
-    <DebugSymbols>true</DebugSymbols>
-    <NoWarn>1591;1573</NoWarn>
-    <DocumentationFile>..\..\..\..\build\AddIns\VersionControl\MonoDevelop.VersionControl.Git.xml</DocumentationFile>
-    <DebugType>pdbonly</DebugType>
-    <ConsolePause>false</ConsolePause>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'ReleaseGnome|AnyCPU' ">
-    <Optimize>true</Optimize>
-    <OutputPath>..\..\..\..\build\AddIns\VersionControl</OutputPath>
-    <WarningLevel>4</WarningLevel>
-    <DebugSymbols>true</DebugSymbols>
-    <NoWarn>1591;1573</NoWarn>
-    <DocumentationFile>..\..\..\..\build\AddIns\VersionControl\MonoDevelop.VersionControl.Git.xml</DocumentationFile>
-    <DebugType>pdbonly</DebugType>
-    <ConsolePause>false</ConsolePause>
-  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'DebugMac|AnyCPU' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'DebugGnome|AnyCPU' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'DebugWin32|AnyCPU' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'ReleaseWin32|AnyCPU' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'ReleaseMac|AnyCPU' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'ReleaseGnome|AnyCPU' " />
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="gtk-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f" />
@@ -115,44 +31,43 @@
     <Compile Include="MonoDevelop.VersionControl.Git\GitVersionControl.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\GitRepository.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\Commands.cs" />
-    <Compile Include="gtk-gui\generated.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\PushDialog.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.VersionControl.Git.PushDialog.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\GitNodeBuilderExtension.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\GitService.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\UserInfoConflictDialog.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.VersionControl.Git.UserInfoConflictDialog.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.VersionControl.Git.ConflictResolutionDialog.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\ConflictResolutionDialog.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\GitConfigurationDialog.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.VersionControl.Git.GitConfigurationDialog.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\EditBranchDialog.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.VersionControl.Git.EditBranchDialog.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\EditRemoteDialog.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.VersionControl.Git.EditRemoteDialog.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.VersionControl.Git.MergeDialog.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\MergeDialog.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\Stash.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\GitUtil.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\CredentialsDialog.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.VersionControl.Git.CredentialsDialog.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\GitCredentials.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\GitOptionsPanelWidget.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.VersionControl.Git.GitOptionsPanelWidget.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\GitOptionsPanel.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\StashManagerDialog.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.VersionControl.Git.StashManagerDialog.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\NewStashDialog.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.VersionControl.Git.NewStashDialog.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\GitCommitDialogExtensionWidget.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.VersionControl.Git.GitCommitDialogExtensionWidget.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\GitCommitDialogExtension.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\UserGitConfigDialog.cs" />
-    <Compile Include="gtk-gui\MonoDevelop.VersionControl.Git.UserGitConfigDialog.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\GitSelectRevisionDialog.cs" />
     <Compile Include="AddinInfo.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\ProjectTemplateHandler.cs" />
     <Compile Include="MonoDevelop.VersionControl.Git\TfsSmartSubtransport.cs" />
+    <Compile Include="Gui\MonoDevelop.VersionControl.Git.ConflictResolutionDialog.cs" />
+    <Compile Include="Gui\MonoDevelop.VersionControl.Git.CredentialsDialog.cs" />
+    <Compile Include="Gui\MonoDevelop.VersionControl.Git.EditBranchDialog.cs" />
+    <Compile Include="Gui\MonoDevelop.VersionControl.Git.EditRemoteDialog.cs" />
+    <Compile Include="Gui\MonoDevelop.VersionControl.Git.GitCommitDialogExtensionWidget.cs" />
+    <Compile Include="Gui\MonoDevelop.VersionControl.Git.GitConfigurationDialog.cs" />
+    <Compile Include="Gui\MonoDevelop.VersionControl.Git.GitOptionsPanelWidget.cs" />
+    <Compile Include="Gui\MonoDevelop.VersionControl.Git.MergeDialog.cs" />
+    <Compile Include="Gui\MonoDevelop.VersionControl.Git.NewStashDialog.cs" />
+    <Compile Include="Gui\MonoDevelop.VersionControl.Git.PushDialog.cs" />
+    <Compile Include="Gui\MonoDevelop.VersionControl.Git.StashManagerDialog.cs" />
+    <Compile Include="Gui\MonoDevelop.VersionControl.Git.UserGitConfigDialog.cs" />
+    <Compile Include="Gui\MonoDevelop.VersionControl.Git.UserInfoConflictDialog.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\..\core\MonoDevelop.Core\MonoDevelop.Core.csproj">
@@ -196,20 +111,12 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedResource Include="MonoDevelop.VersionControl.Git.addin.xml">
-      <LogicalName>MonoDevelop.VersionControl.Git.addin.xml</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="gtk-gui\gui.stetic">
-      <LogicalName>gui.stetic</LogicalName>
-    </EmbeddedResource>
+    <EmbeddedResource Include="MonoDevelop.VersionControl.Git.addin.xml" />
   </ItemGroup>
   <ItemGroup Condition=" '$(Configuration)' == 'DebugWin32' OR '$(Configuration)' == 'ReleaseWin32' ">
-    <EmbeddedResource Include="MonoDevelop.VersionControl.Git.Win32.addin.xml">
-      <LogicalName>MonoDevelop.VersionControl.Git.Win32.addin.xml</LogicalName>
-    </EmbeddedResource>
+    <EmbeddedResource Include="MonoDevelop.VersionControl.Git.Win32.addin.xml" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="Makefile.am" />
     <None Include="GitIgnore.txt">
       <Gettext-ScanForTranslations>False</Gettext-ScanForTranslations>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

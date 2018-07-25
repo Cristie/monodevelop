@@ -329,7 +329,6 @@ typedef struct
 							Console.WriteLine (segi);
 							Console.WriteLine (string.Join (", ", matchedSegment.ScopeStack.ToArray ()));
 							string mk = null;
-							int d = 0;
 							var expr = StackMatchExpression.Parse (segi);
 							var matchResult = expr.MatchesStack (matchedSegment.ScopeStack, ref mk);
 							Assert.IsTrue (matchResult.Item1, "Wrong color at " + seg.Item1 + " expected " + segi + " was " + string.Join (", ", matchedSegment.ScopeStack.ToArray ()));
@@ -451,14 +450,29 @@ typedef struct
 		}
 
 
-
-
-
+		/// <summary>
+		/// Bug 60055 - UI hang on opening TypeScript file
+		/// </summary>
+		[Test]
+		public void TestBug60055 ()
+		{
+			Assert.AreEqual ("\\*=|(?<!\\()/=|%=|\\+=|\\-=", Sublime3Format.CompileRegex ("\\*=|(?<!\\()/=|%=|\\+=|\\-="));
+			Assert.AreEqual ("(?<=[!(+,=?\\[])", Sublime3Format.CompileRegex ("(?<=[=(,\\[?+!])"));
+		}
 
 		[Test]
 		public void TestGroupNameCorrection_Case2 ()
 		{
 			Assert.AreEqual ("(?<interface_name>\\k<type_name>\\s*\\.\\s*)?", Sublime3Format.CompileRegex ("(?<interface-name>\\g<type-name>\\s*\\.\\s*)?"));
+		}
+
+		/// <summary>
+		/// Bug 589495: Opening Makefile in mono/monodevelop crashes IDE
+		/// </summary>
+		[Test]
+		public void TestBug589495 ()
+		{
+			Assert.AreEqual ("(\\$?\\$)[%*+<?@^]", Sublime3Format.CompileRegex ("(\\$?\\$)[@%<?^+*]"));
 		}
 
 		[Ignore("Fixme")]

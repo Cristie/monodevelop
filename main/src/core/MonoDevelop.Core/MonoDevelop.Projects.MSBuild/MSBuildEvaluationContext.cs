@@ -36,20 +36,22 @@ using Microsoft.Build.Utilities;
 using MonoDevelop.Projects.MSBuild.Conditions;
 using System.Globalization;
 using Microsoft.Build.Evaluation;
+using Microsoft.Build.Exceptions;
 using MonoDevelop.Projects.Extensions;
 using System.Collections;
 
 namespace MonoDevelop.Projects.MSBuild
 {
-	class MSBuildEvaluationContext: IExpressionContext
+	sealed class MSBuildEvaluationContext: IExpressionContext
 	{
 		Dictionary<string,string> properties = new Dictionary<string, string> (StringComparer.OrdinalIgnoreCase);
-		static Dictionary<string, string> envVars = new Dictionary<string, string> ();
-		readonly HashSet<string> propertiesWithTransforms = new HashSet<string> (StringComparer.OrdinalIgnoreCase);
-		readonly List<string> propertiesWithTransformsSorted = new List<string> ();
+		readonly IDictionary envVars;
+		readonly HashSet<string> propertiesWithTransforms;
+		readonly List<string> propertiesWithTransformsSorted;
 		List<ImportSearchPathExtensionNode> searchPaths;
+		HashSet<string> nestedImportFiles;
 
-		public Dictionary<string, bool> ExistsEvaluationCache { get; } = new Dictionary<string, bool> ();
+		public Dictionary<string, bool> ExistsEvaluationCache { get; }
 
 		bool allResolved;
 		MSBuildProject project;
@@ -65,16 +67,24 @@ namespace MonoDevelop.Projects.MSBuild
 
 		public MSBuildEvaluationContext ()
 		{
+			ExistsEvaluationCache = new Dictionary<string, bool> ();
+			propertiesWithTransforms = new HashSet<string> (StringComparer.OrdinalIgnoreCase);
+			propertiesWithTransformsSorted = new List<string> ();
+			envVars = Environment.GetEnvironmentVariables ();
+			nestedImportFiles = new HashSet<string> ();
 		}
 
 		public MSBuildEvaluationContext (MSBuildEvaluationContext parentContext)
 		{
 			this.parentContext = parentContext;
 			this.project = parentContext.project;
+			this.Log = parentContext.Log;
+
+			this.ExistsEvaluationCache = parentContext.ExistsEvaluationCache;
 			this.propertiesWithTransforms = parentContext.propertiesWithTransforms;
 			this.propertiesWithTransformsSorted = parentContext.propertiesWithTransformsSorted;
-			this.ExistsEvaluationCache = parentContext.ExistsEvaluationCache;
-			this.Log = parentContext.Log;
+			this.envVars = parentContext.envVars;
+			this.nestedImportFiles = parentContext.nestedImportFiles;
 		}
 
 		internal void InitEvaluation (MSBuildProject project)
@@ -127,6 +137,7 @@ namespace MonoDevelop.Projects.MSBuild
 			properties.Add ("MSBuildBinPath", msBuildBinPathEscaped);
 			properties.Add ("MSBuildToolsPath", msBuildBinPathEscaped);
 			properties.Add ("MSBuildBinPath32", msBuildBinPathEscaped);
+			properties.Add ("MSBuildRuntimeVersion", "4.0.30319");
 
 			properties.Add ("MSBuildToolsRoot", MSBuildProjectService.ToMSBuildPath (null, Path.GetDirectoryName (toolsPath)));
 			properties.Add ("MSBuildToolsVersion", toolsVersion);
@@ -227,7 +238,7 @@ namespace MonoDevelop.Projects.MSBuild
 			get { return project; }
 		}
 
-		public IEnumerable<ImportSearchPathExtensionNode> GetProjectImportSearchPaths ()
+		public IReadOnlyList<ImportSearchPathExtensionNode> GetProjectImportSearchPaths ()
 		{
 			if (parentContext != null)
 				return parentContext.GetProjectImportSearchPaths ();
@@ -277,12 +288,7 @@ namespace MonoDevelop.Projects.MSBuild
 			if (parentContext != null)
 				return parentContext.GetPropertyValue (name);
 
-			lock (envVars) {
-				if (!envVars.TryGetValue (name, out val))
-					envVars[name] = val = Environment.GetEnvironmentVariable (name);
-
-				return val;
-			}
+			return (string)envVars [name];
 		}
 
 		public string GetMetadataValue (string name)
@@ -841,9 +847,9 @@ namespace MonoDevelop.Projects.MSBuild
 
 			if (sval != null && parameterType.IsEnum) {
 				var enumValue = sval;
-				if (enumValue.StartsWith (parameterType.Name))
+				if (enumValue.StartsWith (parameterType.Name, StringComparison.Ordinal))
 					enumValue = enumValue.Substring (parameterType.Name.Length + 1);
-				if (enumValue.StartsWith (parameterType.FullName))
+				if (enumValue.StartsWith (parameterType.FullName, StringComparison.Ordinal))
 					enumValue = enumValue.Substring (parameterType.FullName.Length + 1);
 				return Enum.Parse(parameterType, enumValue, ignoreCase: true);
 			}
@@ -854,9 +860,12 @@ namespace MonoDevelop.Projects.MSBuild
 			var res = Convert.ChangeType (value, parameterType, CultureInfo.InvariantCulture);
 			bool convertPath = false;
 
-			if ((method.DeclaringType == typeof (System.IO.File) || method.DeclaringType == typeof (System.IO.Directory)) && argNum == 0) {
+			if ((method.DeclaringType == typeof (System.IO.File) || method.DeclaringType == typeof (System.IO.Directory)) && argNum == 0)
 				convertPath = true;
-			} else if (method.DeclaringType == typeof (IntrinsicFunctions)) {
+			else if (method.DeclaringType == typeof (System.IO.Path))
+				// The windows path is already converted to a native path, but it may contain escape sequences
+				res = MSBuildProjectService.UnescapePath ((string)res);
+			else if (method.DeclaringType == typeof (IntrinsicFunctions)) {
 				if (method.Name == "MakeRelative")
 					convertPath = true;
 				else if (method.Name == "GetDirectoryNameOfFileAbove" && argNum == 0)
@@ -1059,6 +1068,21 @@ namespace MonoDevelop.Projects.MSBuild
 			}
 			foreach (var v in allProps.OrderBy (s => s))
 				Log.LogMessage (string.Format ($"{v,-30} = {GetPropertyValue (v)}"));
+		}
+
+		/// <summary>
+		/// Registers imports to check for circular dependencies. Once the import has been
+		/// evaluated it should be removed using RemoveImport.
+		/// </summary>
+		public void AddImport (string file)
+		{
+			if (!nestedImportFiles.Add (file))
+				throw new InvalidProjectFileException (GettextCatalog.GetString ("Importing the file \"{0}\" into the file \"{1}\" results in a circular dependency.", file, FullFileName));
+		}
+
+		public void RemoveImport (string file)
+		{
+			nestedImportFiles.Remove (file);
 		}
 	}
 }

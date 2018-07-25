@@ -194,6 +194,34 @@ namespace MonoDevelop.Projects
 				yield return FileName;
 		}
 
+		HashSet<FilePath> rootDirectories;
+
+		/// <summary>
+		/// Returns the root directories associated that should be watched by the file watcher.
+		/// </summary>
+		internal HashSet<FilePath> GetRootDirectories ()
+		{
+			if (rootDirectories != null)
+				return rootDirectories;
+
+			var directories = new HashSet<FilePath> ();
+			foreach (FilePath file in GetItemFiles (true)) {
+				if (!directories.Any (directory => file.IsChildPathOf (directory)))
+					directories.Add (file.ParentDirectory);
+			}
+
+			rootDirectories = directories;
+			return directories;
+		}
+
+		internal event EventHandler RootDirectoriesChanged;
+
+		internal void OnRootDirectoriesChanged ()
+		{
+			rootDirectories = null;
+			RootDirectoriesChanged?.Invoke (this, EventArgs.Empty);
+		}
+
 		[ThreadSafe]
 		public virtual bool ContainsItem (WorkspaceObject obj)
 		{
@@ -251,7 +279,6 @@ namespace MonoDevelop.Projects
 						fileStatusTracker.EndSave ();
 					}
 				}
-				FileService.NotifyFileChanged (FileName);
 			});
 		}
 
@@ -339,9 +366,12 @@ namespace MonoDevelop.Projects
 			userProperties.Dispose ();
 			userProperties = new PropertyBag ();
 
+			string oldPreferencesFileName = GetLegacyPreferencesFileName ();
 			string preferencesFileName = GetPreferencesFileName ();
 
 			return Task.Run (() => {
+				MigrateLegacyUserPreferencesFile (oldPreferencesFileName, preferencesFileName);
+
 				if (!File.Exists (preferencesFileName))
 					return;
 
@@ -373,7 +403,7 @@ namespace MonoDevelop.Projects
 
 		protected virtual Task OnSaveUserProperties ()
 		{
-			string file = GetPreferencesFileName ();
+			FilePath file = GetPreferencesFileName ();
 			var userProps = userProperties;
 
 			return Task.Run (() => {
@@ -385,6 +415,8 @@ namespace MonoDevelop.Projects
 			
 				XmlTextWriter writer = null;
 				try {
+					Directory.CreateDirectory (file.ParentDirectory);
+
 					writer = new XmlTextWriter (file, System.Text.Encoding.UTF8);
 					writer.Formatting = Formatting.Indented;
 					XmlDataSerializer ser = new XmlDataSerializer (new DataContext ());
@@ -399,9 +431,31 @@ namespace MonoDevelop.Projects
 			});
 		}
 		
-		string GetPreferencesFileName ()
+		string GetLegacyPreferencesFileName ()
 		{
 			return FileName.ChangeExtension (".userprefs");
+		}
+
+		static void MigrateLegacyUserPreferencesFile (string legacyPreferencesFileName, FilePath preferencesFileName)
+		{
+			if (!File.Exists (legacyPreferencesFileName))
+				return;
+
+			if (!File.Exists (preferencesFileName)) {
+				Directory.CreateDirectory (preferencesFileName.ParentDirectory);
+
+				File.Move (legacyPreferencesFileName, preferencesFileName);
+			}
+		}
+
+		public FilePath GetPreferencesDirectory ()
+		{
+			return FileName.ParentDirectory.Combine (".vs", Name, "xs");
+		}
+
+		internal string GetPreferencesFileName ()
+		{
+			return GetPreferencesDirectory ().Combine ("UserPrefs.xml");
 		}
 
 		public virtual StringTagModelDescription GetStringTagModelDescription ()
@@ -430,6 +484,9 @@ namespace MonoDevelop.Projects
 		
 		protected override void OnDispose ()
 		{
+			fileStatusTracker.Dispose ();
+			FileWatcherService.Remove (this).Ignore ();
+
 			if (userProperties != null)
 				userProperties.Dispose ();
 			base.OnDispose ();
@@ -470,14 +527,14 @@ namespace MonoDevelop.Projects
 		public event EventHandler<WorkspaceItemEventArgs> Modified;
 		public event EventHandler<WorkspaceItemEventArgs> Saved;
 		
-/*		public event EventHandler<WorkspaceItemEventArgs> ReloadRequired {
+		public event EventHandler<WorkspaceItemEventArgs> ReloadRequired {
 			add {
 				fileStatusTracker.ReloadRequired += value;
 			}
 			remove {
 				fileStatusTracker.ReloadRequired -= value;
 			}
-		}*/
+		}
 
 		internal class DefaultWorkspaceItemExtension: WorkspaceItemExtension
 		{
@@ -493,14 +550,12 @@ namespace MonoDevelop.Projects
 		}
 	}
 	
-	class FileStatusTracker<TEventArgs> where TEventArgs:EventArgs
+	class FileStatusTracker<TEventArgs> : IDisposable where TEventArgs:EventArgs
 	{
 		Dictionary<string,DateTime> lastSaveTime;
-		Dictionary<string,DateTime> reloadCheckTime;
 		bool savingFlag;
-//		bool needsReload;
-//		List<FileSystemWatcher> watchers;
-//		Action<TEventArgs> onReloadRequired;
+		bool needsReload;
+		Action<TEventArgs> onReloadRequired;
 		TEventArgs eventArgs;
 		EventHandler<TEventArgs> reloadRequired;
 		
@@ -510,18 +565,17 @@ namespace MonoDevelop.Projects
 		{
 			this.item = item;
 			this.eventArgs = eventArgs;
-//			this.onReloadRequired = onReloadRequired;
+			this.onReloadRequired = onReloadRequired;
 			lastSaveTime = new Dictionary<string,DateTime> ();
-			reloadCheckTime = new Dictionary<string,DateTime> ();
 			savingFlag = false;
 			reloadRequired = null;
+			FileService.FileChanged += HandleFileChanged;
 		}
 		
 		public void BeginSave ()
 		{
 			savingFlag = true;
-//			needsReload = false;
-			DisposeWatchers ();
+			needsReload = false;
 		}
 		
 		public void EndSave ()
@@ -533,27 +587,20 @@ namespace MonoDevelop.Projects
 		public void ResetLoadTimes ()
 		{
 			lastSaveTime.Clear ();
-			reloadCheckTime.Clear ();
 			foreach (FilePath file in item.GetItemFiles (false))
-				lastSaveTime [file] = reloadCheckTime [file] = GetLastWriteTime (file);
-//			needsReload = false;
-			if (reloadRequired != null)
-				InternalNeedsReload ();
+				lastSaveTime [file] = GetLastWriteTime (file);
+			needsReload = false;
 		}
 		
 		public bool NeedsReload {
 			get {
 				if (savingFlag)
 					return false;
-				return InternalNeedsReload ();
+				return needsReload;
 			}
 			set {
-//				needsReload = value;
-				if (value) {
-					reloadCheckTime.Clear ();
-					foreach (FilePath file in item.GetItemFiles (false))
-						reloadCheckTime [file] = DateTime.MinValue;
-				} else {
+				needsReload = value;
+				if (!value) {
 					ResetLoadTimes ();
 				}
 			}
@@ -570,54 +617,24 @@ namespace MonoDevelop.Projects
 			}
 		}
 		
-		bool InternalNeedsReload ()
+		void HandleFileChanged (object sender, FileEventArgs e)
 		{
-			foreach (FilePath file in item.GetItemFiles (false)) {
-				if (GetLastReloadCheckTime (file) != GetLastWriteTime (file))
-					return true;
-			}
-			return false;
-/*			
-			if (needsReload)
-				return true;
-			
-			// Watchers already set? if so, then since needsReload==false, no change has
-			// happened so far
-			if (watchers != null)
-				return false;
-		
-			// Handlers are not set up. Do the check now, and set the handlers.
-			watchers = new List<FileSystemWatcher> ();
-			foreach (FilePath file in item.GetItemFiles (false)) {
-				FileSystemWatcher w = new FileSystemWatcher (file.ParentDirectory, file.FileName);
-				w.IncludeSubdirectories = false;
-				w.Changed += HandleFileChanged;
-				w.EnableRaisingEvents = true;
-				watchers.Add (w);
-				if (GetLastReloadCheckTime (file) != GetLastWriteTime (file))
-					needsReload = true;
-			}
-			return needsReload;
-			*/
-		}
-		
-		void DisposeWatchers ()
-		{
-/*			if (watchers == null)
+			if (savingFlag || needsReload)
 				return;
-			foreach (FileSystemWatcher w in watchers)
-				w.Dispose ();
-			watchers = null;
-*/		}
 
-/*		void HandleFileChanged (object sender, FileSystemEventArgs e)
-		{
-			if (!savingFlag && !needsReload) {
-				needsReload = true;
-				onReloadRequired (eventArgs);
+			foreach (FilePath file in item.GetItemFiles (false)) {
+				foreach (FileEventInfo info in e) {
+					if (file == info.FileName) {
+						if (GetLastSaveTime (file) != GetLastWriteTime (file)) {
+							needsReload = true;
+							onReloadRequired (eventArgs);
+							return;
+						}
+					}
+				}
 			}
 		}
-*/
+
 		DateTime GetLastWriteTime (FilePath file)
 		{
 			try {
@@ -637,19 +654,10 @@ namespace MonoDevelop.Projects
 				return DateTime.MinValue;
 		}
 
-		DateTime GetLastReloadCheckTime (FilePath file)
-		{
-			DateTime dt;
-			if (reloadCheckTime.TryGetValue (file, out dt))
-				return dt;
-			else
-				return DateTime.MinValue;
-		}
-		
 		public event EventHandler<TEventArgs> ReloadRequired {
 			add {
 				reloadRequired += value;
-				if (InternalNeedsReload ())
+				if (needsReload)
 					value (this, eventArgs);
 			}
 			remove {
@@ -661,6 +669,11 @@ namespace MonoDevelop.Projects
 		{
 			if (reloadRequired != null)
 				reloadRequired (this, args);
+		}
+
+		public void Dispose ()
+		{
+			FileService.FileChanged -= HandleFileChanged;
 		}
 	}
 

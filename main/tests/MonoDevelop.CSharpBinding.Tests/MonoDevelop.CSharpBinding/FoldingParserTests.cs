@@ -30,6 +30,7 @@ using NUnit.Framework;
 
 using MonoDevelop.CSharp.Parser;
 using System.Text;
+using System.Threading.Tasks;
 using System.Collections.Generic;
 using MonoDevelop.Ide.TypeSystem;
 using MonoDevelop.Ide.Editor;
@@ -43,13 +44,13 @@ namespace MonoDevelop.CSharpBinding
 		{
 			var parser = new CSharpFoldingParser ();
 			var sb = new StringBuilder ();
-			var openStack = new Stack<DocumentLocation>();
-			
+			var openStack = new Stack<DocumentLocation> ();
+
 			int line = 1;
 			int col = 1;
-			
+
 			var foldingList = new List<DocumentRegion> ();
-			
+
 			for (int i = 0; i < code.Length; i++) {
 				char ch = code [i];
 				switch (ch) {
@@ -60,7 +61,7 @@ namespace MonoDevelop.CSharpBinding
 					foldingList.Add (new DocumentRegion (openStack.Pop (), new DocumentLocation (line, col)));
 					break;
 				default:
-					if (ch =='\n') {
+					if (ch == '\n') {
 						line++;
 						col = 1;
 					} else {
@@ -70,9 +71,9 @@ namespace MonoDevelop.CSharpBinding
 					break;
 				}
 			}
-			
+
 			var doc = parser.Parse ("a.cs", sb.ToString ());
-			var generatedFoldings = doc.GetFoldingsAsync().Result;
+			var generatedFoldings = doc.GetFoldingsAsync ().Result;
 			Assert.AreEqual (foldingList.Count, generatedFoldings.Count, "Folding count differs.");
 			foreach (var generated in generatedFoldings) {
 				Assert.IsTrue (foldingList.Any (f => f == generated.Region), "fold not found:" + generated.Region);
@@ -110,7 +111,7 @@ class SomeNew {
 		}
 		
 		[Test]
-		public void TestFileHeader ()
+		public async Task TestFileHeaderAsync ()
 		{
 			var doc = Test (@"[// 
 // EnumMemberDeclaration.cs
@@ -138,14 +139,14 @@ class SomeNew {
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.]
 using System;");
-			foreach (var cmt in doc.GetCommentsAsync().Result) {
+			foreach (var cmt in await doc.GetCommentsAsync()) {
 				Assert.IsFalse (cmt.Text.StartsWith ("//"));
 			}
 
 		}
 		
 		[Test]
-		public void TestRegions ()
+		public async Task TestRegionsAsync ()
 		{
 			var doc = Test (@"class Test
 {
@@ -155,12 +156,13 @@ using System;");
 	}
 	#endregion]
 }");
-			Assert.AreEqual (1, doc.GetFoldingsAsync().Result.Count ());
-			Assert.AreEqual ("TestRegion", doc.GetFoldingsAsync().Result.First ().Name);
+			var foldings = await doc.GetFoldingsAsync ();
+			Assert.AreEqual (1, foldings.Count ());
+			Assert.AreEqual ("TestRegion", foldings.First ().Name);
 		}
 		
 		[Test]
-		public void TestTwoRegions ()
+		public async Task TestTwoRegionsAsync ()
 		{
 			var doc = Test (@"class Test
 {
@@ -176,14 +178,15 @@ using System;");
 	}
 	#endregion]
 }");
-			Assert.AreEqual (2, doc.GetFoldingsAsync().Result.Count ());
-			Assert.AreEqual ("TestRegion", doc.GetFoldingsAsync().Result.First ().Name);
-			Assert.AreEqual ("TestRegion2", doc.GetFoldingsAsync().Result.Skip (1).First ().Name);
+			var foldings = await doc.GetFoldingsAsync ();
+			Assert.AreEqual (2, foldings.Count ());
+			Assert.AreEqual ("TestRegion", foldings.First ().Name);
+			Assert.AreEqual ("TestRegion2", foldings.Skip (1).First ().Name);
 		}
-		
+
 
 		[Test]
-		public void TestDocComment ()
+		public async Task TestDocCommentAsync ()
 		{
 			var doc = Test (@"class Test
 {
@@ -194,13 +197,12 @@ using System;");
 	{
 	}
 }");
-			foreach (var cmt in doc.GetCommentsAsync().Result) {
+			foreach (var cmt in await doc.GetCommentsAsync ()) {
 				Assert.IsFalse (cmt.Text.StartsWith ("///"));
 				Assert.IsTrue (cmt.IsDocumentation);
 			}
 		}
-		
-		
+
 		[Test]
 		public void TestNestedSingeLineComment ()
 		{
@@ -209,10 +211,10 @@ using System;");
 // Comment 
 
 */]");
-		}		
-		
-		
-		
+		}
+
+
+
 		[Test]
 		public void TestNestedMultiLineComment ()
 		{
@@ -225,7 +227,7 @@ using System;");
 
 		// Bug 8896 - Strange "jump" behaviour when clicking on a search result, which makes the cursor go to the wrong location
 		[Test]
-		public void TestBug8896 ()
+		public async Task TestBug8896Async ()
 		{
 			var doc = Test (@"class Test
 {
@@ -233,10 +235,179 @@ using System;");
 	{ // not be 
 	} // folded
 }");
-			Assert.AreEqual (0, doc.GetFoldingsAsync().Result.Count ());
+			Assert.AreEqual (0, (await doc.GetFoldingsAsync ()).Count ());
 		}
 
-		
+		static ParsedDocument GetDocument (string code)
+		{
+			var parser = new CSharpFoldingParser ();
+			return parser.Parse ("a.cs", code);
+		}
+
+		[Test]
+		public async Task TestSingleLineCommentFoldingsAsync ()
+		{
+			var doc = GetDocument (@"//               MyFoldingText
+//
+//");
+			var foldings = await doc.GetFoldingsAsync ();
+			Assert.AreEqual (1, foldings.Count ());
+			Assert.AreEqual ("// MyFoldingText ...", foldings [0].Name);
+		}
+
+		[Test]
+		public async Task TestSingleLineFoldingsCommentEmptyTextAsync ()
+		{
+			var doc = GetDocument (@"//
+//
+//");
+			var foldings = await doc.GetFoldingsAsync ();
+			Assert.AreEqual (1, foldings.Count ());
+			Assert.AreEqual ("//  ...", foldings [0].Name); // y it's 2 spaces - no error
+		}
+
+		[Test]
+		public async Task TestBlockCommentFoldingsAsync ()
+		{
+			var doc = GetDocument (@"/*               MyFoldingText
+*/");
+			var foldings = await doc.GetFoldingsAsync ();
+			Assert.AreEqual (1, foldings.Count ());
+			Assert.AreEqual ("/* MyFoldingText ...", foldings [0].Name);
+		}
+
+		[Test]
+		public async Task TestBlockCommentEmptyFirstLineFoldingsAsync ()
+		{
+			var doc = GetDocument (@"/* 
+*              MyFoldingText
+*/");
+			var foldings = await doc.GetFoldingsAsync ();
+			Assert.AreEqual (1, foldings.Count ());
+			Assert.AreEqual ("/*  ...", foldings [0].Name);
+		}
+
+		[Test]
+		public async Task TestBlockCommentEmptyFoldingsAsync ()
+		{
+			var doc = GetDocument (@"/* 
+*/");
+			var foldings = await doc.GetFoldingsAsync ();
+			Assert.AreEqual (1, foldings.Count ());
+			Assert.AreEqual ("/*  ...", foldings [0].Name);
+		}
+
+
+		[Test]
+		public async Task TestDocCommentFoldingsAsync ()
+		{
+			var doc = GetDocument (@"/// FooBar
+///
+/// Test");
+			var foldings = await doc.GetFoldingsAsync ();
+			Assert.AreEqual (1, foldings.Count ());
+			Assert.AreEqual ("/// FooBar ...", foldings [0].Name);
+		}
+
+		[Test]
+		public async Task TestDocCommentWithSummaryFoldingsAsync ()
+		{
+			var doc = GetDocument (@"
+		/// <summary>
+		/// FooBar
+		/// </summary>");
+			var foldings = await doc.GetFoldingsAsync ();
+			Assert.AreEqual (1, foldings.Count ());
+			Assert.AreEqual ("/// <summary> FooBar ...", foldings [0].Name);
+		}
+
+
+		[Test]
+		public async Task TestNonSummaryTagAsync ()
+		{
+			var doc = GetDocument (@"
+		/// <remarks>
+		/// Test
+		/// </remarks>");
+			var foldings = await doc.GetFoldingsAsync ();
+			Assert.AreEqual (1, foldings.Count ());
+			Assert.AreEqual ("/// <remarks> ...", foldings [0].Name);
+		}
+		[Test]
+		public async Task TestComplexSummaryAsync ()
+		{
+			var doc = GetDocument (@"
+		///  evlxngefgvlsefqvl <see>Test</see>
+		/// <summary>
+		/// FooBar
+		/// </summary>  <see>Test</see>");
+			var foldings = await doc.GetFoldingsAsync ();
+			Assert.AreEqual (1, foldings.Count ());
+			Assert.AreEqual ("/// <summary> FooBar ...", foldings [0].Name);
+		}
+
+		[Test]
+		public async Task TestDocCommentEmptyAsync ()
+		{
+			var doc = GetDocument (@"
+		/// 
+		/// 
+		/// ");
+			var foldings = await doc.GetFoldingsAsync ();
+			Assert.AreEqual (1, foldings.Count ());
+			Assert.AreEqual ("///  ...", foldings [0].Name);
+		}
+
+		[Test]
+		public void TestIssue4693 ()
+		{
+			Test (@"
+[// fold1
+// fold1]
+
+namespace Foo
+{
+	[// fold2
+	// fold2]
+
+	class Test
+	{
+		public static void Main ()
+		{
+			// nofold
+			// nofold
+			// nofold
+		}
+	}
+}
+		 ");
+		}
+
+		[Test]
+		public void TestIssue4868 ()
+		{
+			Test (@"
+[/* fold1
+ fold1 */]
+
+namespace Foo
+{
+	[/* fold2
+	 fold2 */]
+
+	class Test
+	{
+		public static void Main ()
+		{
+			/* nofold
+			   nofold
+			   nofold */
+		}
+	}
+}
+		 ");
+
+		}
 	}
 }
 

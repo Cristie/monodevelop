@@ -66,7 +66,8 @@ namespace MonoDevelop.Projects.MSBuild
 							return result.Path;
 						}
 
-						results.Add (result);
+						if (result != null)
+							results.Add (result);
 					} catch (Exception e) {
 						logger.LogFatalBuildError (buildEventContext, e, projectFile);
 					}
@@ -104,7 +105,7 @@ namespace MonoDevelop.Projects.MSBuild
 			// Also add the default resolver.
 
 			var resolvers = new List<SdkResolver> { new MonoDevelop.Projects.MSBuild.Resolver (MSBuildProjectService.FindRegisteredSdks), new DefaultSdkResolver { TargetRuntime = runtime } };
-			MSBuildProjectService.GetNewestInstalledToolsVersion (runtime, true, out var binDir);
+			var binDir = MSBuildProjectService.GetMSBuildBinPath (runtime);
 			var potentialResolvers = FindPotentialSdkResolvers (Path.Combine (binDir, "SdkResolvers"));
 
 			if (potentialResolvers.Count == 0) return resolvers;
@@ -115,7 +116,7 @@ namespace MonoDevelop.Projects.MSBuild
 
 					resolvers.AddRange (assembly.ExportedTypes
 						.Select (type => new { type, info = type.GetTypeInfo () })
-						.Where (t => t.info.IsClass && t.info.IsPublic && typeof (SdkResolver).IsAssignableFrom (t.type))
+						.Where (t => t.info.IsClass && t.info.IsPublic && !t.info.IsAbstract && typeof (SdkResolver).IsAssignableFrom (t.type))
 						.Select (t => (SdkResolver)Activator.CreateInstance (t.type)));
 				} catch (Exception e) {
 					logger.LogWarning (e.Message);

@@ -86,7 +86,7 @@ namespace Mono.TextEditor
 
 			string GetCopiedPlainText (string eol = "\n")
 			{
-				var plainText = new StringBuilder ();
+				var plainText = StringBuilderCache.Allocate ();
 				bool first = true;
 				foreach (var line in copiedColoredChunks) {
 					if (!first) {
@@ -99,7 +99,7 @@ namespace Mono.TextEditor
 						plainText.Append (chunk.Text);
 					}
 				}
-				return plainText.ToString ();
+				return StringBuilderCache.ReturnAndFree (plainText);
 			}
 
 			public void SetData (SelectionData selection_data, uint info)
@@ -196,7 +196,7 @@ namespace Mono.TextEditor
 				TargetList = new TargetList (TargetEntries);
 			}
 			
-			void CopyData (TextEditorData data, MonoDevelop.Ide.Editor.Selection selection)
+			async void CopyData (TextEditorData data, MonoDevelop.Ide.Editor.Selection selection)
 			{
 				if (!selection.IsEmpty && data != null && data.Document != null) {
 					this.docStyle = data.ColorStyle;
@@ -208,13 +208,13 @@ namespace Mono.TextEditor
 					case MonoDevelop.Ide.Editor.SelectionMode.Normal:
 						isBlockMode = false;
 						var segment = selection.GetSelectionRange (data);
-						copiedColoredChunks = ClipboardColoredText.GetChunks (data, segment);
+						copiedColoredChunks = await ClipboardColoredText.GetChunks (data, segment);
 						var pasteHandler = data.TextPasteHandler;
 						if (pasteHandler != null) {
 							try {
 								copyData = pasteHandler.GetCopyData (segment.Offset, segment.Length);
 							} catch (Exception e) {
-								Console.WriteLine ("Exception while getting copy data:" + e);
+								LoggingService.LogError ("Exception while getting copy data", e);
 							}
 						}
 						break;
@@ -230,7 +230,7 @@ namespace Mono.TextEditor
 							int col1 = curLine.GetLogicalColumn (data, startCol) - 1;
 							int col2 = System.Math.Min (curLine.GetLogicalColumn (data, endCol) - 1, curLine.Length);
 							if (col1 < col2) {
-								copiedColoredChunks.Add (ClipboardColoredText.GetChunks (data, new TextSegment (curLine.Offset + col1, col2 - col1)).First ());
+								copiedColoredChunks.Add ((await ClipboardColoredText.GetChunks (data, new TextSegment (curLine.Offset + col1, col2 - col1))).First ());
 							} else {
 								copiedColoredChunks.Add (new List<ClipboardColoredText> ());
 							}
@@ -435,12 +435,17 @@ namespace Mono.TextEditor
 			data.Document.CommitLineUpdate (data.GetLineByOffset (insertionOffset));
 			return result;
 		}
-		
+
 		public static void Paste (TextEditorData data)
 		{
+			PasteWithResult (data);
+		}
+
+		public static bool PasteWithResult (TextEditorData data)
+		{
 			if (!data.CanEditSelection)
-				return;
-			PasteFrom (Clipboard.Get (CopyOperation.CLIPBOARD_ATOM), data, false, data.IsSomethingSelected ? data.SelectionRange.Offset : data.Caret.Offset);
+				return false;
+			return PasteFrom (Clipboard.Get (CopyOperation.CLIPBOARD_ATOM), data, false, data.IsSomethingSelected ? data.SelectionRange.Offset : data.Caret.Offset) > 0;
 		}
 
 		public static string GetClipboardContent()

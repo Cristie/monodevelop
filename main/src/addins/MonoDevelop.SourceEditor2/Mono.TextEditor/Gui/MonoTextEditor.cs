@@ -46,7 +46,7 @@ namespace Mono.TextEditor
 {
 	[System.ComponentModel.Category("Mono.TextEditor")]
 	[System.ComponentModel.ToolboxItem(true)]
-	class MonoTextEditor : Container
+	partial class MonoTextEditor : Container
 	{
 		readonly TextArea textArea;
 
@@ -82,6 +82,7 @@ namespace Mono.TextEditor
 
 		internal MonoTextEditor (TextDocument doc, ITextEditorOptions options, EditMode initialMode) 
 		{
+			this.Direction = TextDirection.Ltr;
 			uiThread = Thread.CurrentThread;
 			GtkWorkarounds.FixContainerLeak (this);
 			WidgetFlags |= WidgetFlags.NoWindow;
@@ -604,14 +605,14 @@ namespace Mono.TextEditor
 			textArea.RedrawPosition (logicalLine, logicalColumn);
 		}
 
-		internal void RedrawLine (int line)
+		internal void RedrawLine (int line, bool removeLineCache = true)
 		{
-			textArea.RedrawLine (line);
+			textArea.RedrawLine (line, removeLineCache);
 		}
 
-		internal void RedrawLines (int start, int end)
+		internal void RedrawLines (int start, int end, bool removeLineCache = true)
 		{
-			textArea.RedrawLines (start, end);
+			textArea.RedrawLines (start, end, removeLineCache);
 		}
 
 		internal string preeditString {
@@ -646,6 +647,11 @@ namespace Mono.TextEditor
 		internal void ResetIMContext ()
 		{
 			textArea.ResetIMContext ();
+		}
+
+		internal void CommitPreedit ()
+		{
+			textArea.CommitPreedit ();
 		}
 
 		internal bool ContainsPreedit (int offset, int length)
@@ -912,8 +918,7 @@ namespace Mono.TextEditor
 			} catch (Exception e) {
 				if (Debugger.IsAttached)
 					Debugger.Break ();
-				//TODO: we should really find a way to log this properly
-				Console.WriteLine ("Error while executing " + action + " :" + e);
+				LoggingService.LogError ("Error while executing " + action, e);
 			}
 		}
 

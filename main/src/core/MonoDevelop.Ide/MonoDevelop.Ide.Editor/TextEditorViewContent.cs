@@ -48,6 +48,7 @@ using Microsoft.CodeAnalysis;
 using Gdk;
 using MonoDevelop.Ide.CodeFormatting;
 using System.Collections.Immutable;
+using Microsoft.VisualStudio.CodingConventions;
 
 namespace MonoDevelop.Ide.Editor
 {
@@ -73,8 +74,8 @@ namespace MonoDevelop.Ide.Editor
 			this.textEditor.MimeTypeChanged += UpdateTextEditorOptions;
 			DefaultSourceEditorOptions.Instance.Changed += UpdateTextEditorOptions;
 			textEditorImpl.ViewContent.ContentNameChanged += ViewContent_ContentNameChanged;
-			textEditorImpl.ViewContent.DirtyChanged += ViewContent_DirtyChanged; ;
-
+			textEditorImpl.ViewContent.DirtyChanged += ViewContent_DirtyChanged; 
+			textEditor.Options = DefaultSourceEditorOptions.Instance.Create ();
 		}
 
 		protected override void OnContentNameChanged ()
@@ -82,9 +83,10 @@ namespace MonoDevelop.Ide.Editor
 			base.OnContentNameChanged ();
 			if (ContentName != textEditorImpl.ContentName && !string.IsNullOrEmpty (textEditorImpl.ContentName))
 				AutoSave.RemoveAutoSaveFile (textEditorImpl.ContentName);
-			textEditorImpl.ContentName = this.ContentName;
+			textEditor.FileName = ContentName;
 			if (this.WorkbenchWindow?.Document != null)
 				textEditor.InitializeExtensionChain (this.WorkbenchWindow.Document);
+			UpdateTextEditorOptions (null, null);
 		}
 
 		void ViewContent_ContentNameChanged (object sender, EventArgs e)
@@ -110,7 +112,7 @@ namespace MonoDevelop.Ide.Editor
 
 		void UpdateTextEditorOptions (object sender, EventArgs e)
 		{
-			UpdateStyleParent (Project, textEditor.MimeType);
+			UpdateStyleParent (Project, textEditor.MimeType).Ignore ();
 		}
 
 		uint autoSaveTimer = 0;
@@ -145,7 +147,7 @@ namespace MonoDevelop.Ide.Editor
 				policyContainer.PolicyChanged -= HandlePolicyChanged;
 		}
 
-		void UpdateStyleParent (MonoDevelop.Projects.Project styleParent, string mimeType)
+		async Task UpdateStyleParent (MonoDevelop.Projects.Project styleParent, string mimeType)
 		{
 			RemovePolicyChangeHandler ();
 
@@ -159,16 +161,20 @@ namespace MonoDevelop.Ide.Editor
 			else
 				policyContainer = MonoDevelop.Projects.Policies.PolicyService.DefaultPolicies;
 			var currentPolicy = policyContainer.Get<TextStylePolicy> (mimeTypes);
-
 			policyContainer.PolicyChanged += HandlePolicyChanged;
-			textEditor.Options = DefaultSourceEditorOptions.Instance.WithTextStyle (currentPolicy);
+			((DefaultSourceEditorOptions)textEditor.Options).UpdateStylePolicy (currentPolicy);
+
+			var context = await EditorConfigService.GetEditorConfigContext (textEditor.FileName, default (CancellationToken));
+			if (context == null)
+				return;
+			((DefaultSourceEditorOptions)textEditor.Options).SetContext (context);
 		}
 
 		void HandlePolicyChanged (object sender, MonoDevelop.Projects.Policies.PolicyChangedEventArgs args)
 		{
 			var mimeTypes = DesktopService.GetMimeTypeInheritanceChain (textEditor.MimeType);
 			var currentPolicy = policyContainer.Get<TextStylePolicy> (mimeTypes);
-			textEditor.Options = DefaultSourceEditorOptions.Instance.WithTextStyle (currentPolicy);
+			((DefaultSourceEditorOptions)textEditor.Options).UpdateStylePolicy (currentPolicy);
 		}
 
 		void CancelDocumentParsedUpdate ()
@@ -336,6 +342,7 @@ namespace MonoDevelop.Ide.Editor
 			base.Dispose ();
 
 			isDisposed = true;
+			EditorConfigService.RemoveEditConfigContext (textEditor.FileName).Ignore ();
 			CancelDocumentParsedUpdate ();
 			textEditorImpl.ViewContent.DirtyChanged -= HandleDirtyChanged;
 			textEditor.MimeTypeChanged -= UpdateTextEditorOptions;

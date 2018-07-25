@@ -7,6 +7,7 @@ namespace Microsoft.VisualStudio.Platform
     using System;
     using System.Collections.Generic;
     using Microsoft.VisualStudio.Text;
+    using Microsoft.VisualStudio.Text.Editor;
     using MonoDevelop.Ide.Editor.Highlighting;
 
     /// <summary>
@@ -17,7 +18,8 @@ namespace Microsoft.VisualStudio.Platform
     /// ITagBasedSyntaxHighlightingFactory factory = null;
     /// </remarks>
     public interface ITagBasedSyntaxHighlightingFactory
-    {
-        ISyntaxHighlighting CreateSyntaxHighlighting (ITextBuffer textBuffer);
+	{
+		ISyntaxHighlighting CreateSyntaxHighlighting (ITextView textView);
+		ISyntaxHighlighting CreateSyntaxHighlighting (ITextView textView, string defaultScope);
     }
 }

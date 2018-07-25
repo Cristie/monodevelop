@@ -72,6 +72,7 @@ namespace MonoDevelop.Ide.TypeSystem
 
 		static TypeSystemService ()
 		{
+			RoslynServices.RoslynService.Initialize ();
 			CleanupCache ();
 			parsers = AddinManager.GetExtensionNodes<TypeSystemParserNode> ("/MonoDevelop/TypeSystem/Parser");
 			bool initialLoad = true;
@@ -314,7 +315,7 @@ namespace MonoDevelop.Ide.TypeSystem
 		{
 			var derivedDataPath = UserProfile.Current.CacheDir.Combine ("DerivedData");
 
-			var name = new StringBuilder ();
+			var name = StringBuilderCache.Allocate ();
 			foreach (var ch in framework.Name) {
 				if (char.IsLetterOrDigit (ch)) {
 					name.Append (ch);
@@ -323,7 +324,7 @@ namespace MonoDevelop.Ide.TypeSystem
 				}
 			}
 
-			string result = derivedDataPath.Combine (name.ToString ());
+			string result = derivedDataPath.Combine (StringBuilderCache.ReturnAndFree (name));
 			try {
 				if (!Directory.Exists (result))
 					Directory.CreateDirectory (result);
@@ -649,11 +650,11 @@ namespace MonoDevelop.Ide.TypeSystem
 			}
 		}
 
-		internal static void InformDocumentOpen (Microsoft.CodeAnalysis.DocumentId analysisDocument, TextEditor editor)
+		internal static void InformDocumentOpen (Microsoft.CodeAnalysis.DocumentId analysisDocument, TextEditor editor, DocumentContext context)
 		{
 			foreach (var w in workspaces) {
 				if (w.Contains (analysisDocument.ProjectId)) {
-					w.InformDocumentOpen (analysisDocument, editor); 
+					w.InformDocumentOpen (analysisDocument, editor, context); 
 					return;
 				}
 			}
@@ -663,7 +664,7 @@ namespace MonoDevelop.Ide.TypeSystem
 			}
 		}
 
-		internal static void InformDocumentOpen (Microsoft.CodeAnalysis.Workspace ws, Microsoft.CodeAnalysis.DocumentId analysisDocument, TextEditor editor)
+		internal static void InformDocumentOpen (Microsoft.CodeAnalysis.Workspace ws, Microsoft.CodeAnalysis.DocumentId analysisDocument, TextEditor editor, DocumentContext context)
 		{
 			if (ws == null)
 				throw new ArgumentNullException (nameof (ws));
@@ -671,7 +672,7 @@ namespace MonoDevelop.Ide.TypeSystem
 				throw new ArgumentNullException (nameof (analysisDocument));
 			if (editor == null)
 				throw new ArgumentNullException (nameof (editor));
-			((MonoDevelopWorkspace)ws).InformDocumentOpen (analysisDocument, editor); 
+			((MonoDevelopWorkspace)ws).InformDocumentOpen (analysisDocument, editor, context); 
 		}
 
 		static bool gotDocumentRequestError = false;
@@ -730,5 +731,33 @@ namespace MonoDevelop.Ide.TypeSystem
 			return null;
 		}
 
+		static StatusBarIcon statusIcon = null;
+		static int workspacesLoading = 0;
+
+		internal static void ShowTypeInformationGatheringIcon ()
+		{
+			Gtk.Application.Invoke ((o, args) => {
+				workspacesLoading++;
+				if (statusIcon != null)
+					return;
+
+				if (IdeApp.IsInitialized)
+					statusIcon = IdeApp.Workbench?.StatusBar.ShowStatusIcon (ImageService.GetIcon (Gui.Stock.Parser));
+				if (statusIcon != null)
+					statusIcon.ToolTip = GettextCatalog.GetString ("Gathering class information");
+			});
+		}
+
+		internal static void HideTypeInformationGatheringIcon (Action callback = null)
+		{
+			Gtk.Application.Invoke ((o, args) => {
+				workspacesLoading--;
+				if (workspacesLoading == 0 && statusIcon != null) {
+					statusIcon.Dispose ();
+					statusIcon = null;
+					callback?.Invoke ();
+				}
+			});
+		}
 	}
 }

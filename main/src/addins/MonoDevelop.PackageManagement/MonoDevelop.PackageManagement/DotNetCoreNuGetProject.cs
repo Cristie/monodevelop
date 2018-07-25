@@ -96,9 +96,14 @@ namespace MonoDevelop.PackageManagement
 			get { return msbuildProjectPath; }
 		}
 
+		public static bool CanCreate (DotNetProject project)
+		{
+			return project.MSBuildProject.Sdk != null;
+		}
+
 		public static NuGetProject Create (DotNetProject project)
 		{
-			if (project.MSBuildProject.Sdk != null)
+			if (CanCreate (project))
 				return new DotNetCoreNuGetProject (project);
 
 			return null;
@@ -147,26 +152,20 @@ namespace MonoDevelop.PackageManagement
 
 		bool AddPackageReference (PackageIdentity packageIdentity, INuGetProjectContext context)
 		{
-			ProjectPackageReference packageReference = project.GetPackageReference (packageIdentity);
-			if (packageReference != null) {
+			ProjectPackageReference packageReference = project.GetPackageReference (packageIdentity, matchVersion: false);
+			if (packageReference?.Equals (packageIdentity, matchVersion: true) == true) {
 				context.Log (MessageLevel.Warning, GettextCatalog.GetString ("Package '{0}' already exists in project '{1}'", packageIdentity, project.Name));
 				return false;
 			}
 
-			RemoveExistingPackageReference (packageIdentity);
-
-			packageReference = ProjectPackageReference.Create (packageIdentity);
-			project.Items.Add (packageReference);
+			if (packageReference != null) {
+				packageReference.Version = packageIdentity.Version.ToNormalizedString ();
+			} else {
+				packageReference = ProjectPackageReference.Create (packageIdentity);
+				project.Items.Add (packageReference);
+			}
 
 			return true;
-		}
-
-		void RemoveExistingPackageReference (PackageIdentity packageIdentity)
-		{
-			ProjectPackageReference packageReference = project.GetPackageReference (packageIdentity, matchVersion: false);
-			if (packageReference != null) {
-				project.Items.Remove (packageReference);
-			}
 		}
 
 		public override async Task<bool> UninstallPackageAsync (
@@ -286,8 +285,6 @@ namespace MonoDevelop.PackageManagement
 				DotNetProject.DotNetCoreNotifyReferencesChanged ();
 			});
 
-			packageManagementEvents.OnFileChanged (project.GetNuGetAssetsFilePath ());
-
 			return base.PostProcessAsync (nuGetProjectContext, token);
 		}
 
@@ -302,11 +299,13 @@ namespace MonoDevelop.PackageManagement
 				await restoreTask;
 			}
 
+			// Ensure MSBuild tasks are up to date when the next build is run.
+			project.ShutdownProjectBuilder ();
+
 			if (!packageRestorer.LockFileChanged) {
 				// Need to refresh the references since the restore did not.
 				await Runtime.RunInMainThread (() => {
 					DotNetProject.DotNetCoreNotifyReferencesChanged ();
-					packageManagementEvents.OnFileChanged (project.GetNuGetAssetsFilePath ());
 				});
 			}
 

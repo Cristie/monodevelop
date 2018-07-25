@@ -1,17 +1,20 @@
 include $(top_srcdir)/xbuild.include
 
-SUBDIRS=UnitTests MacPlatform.Tests UserInterfaceTests TestRunner Ide.Tests MonoDevelop.CSharpBinding.Tests
+SUBDIRS=UnitTests IdeUnitTests MacPlatform.Tests UserInterfaceTests TestRunner Ide.Tests MonoDevelop.CSharpBinding.Tests WindowsPlatform.Tests MonoDevelop.Core.Tests MonoDevelop.Core.Tests.Addin MonoDevelop.Refactoring.Tests
 
 MONO=mono$(SGEN_SUFFIX)
 RUN_TEST=$(MDTOOL_RUN) run-md-tests
 TEST_DIR=$(top_builddir)/build/tests
+TEST_SRC_DIR=$(top_srcdir)/tests
 EXTERNAL=$(top_builddir)/external
 MACOS_10_10=$(shell (test `sw_vers -productVersion | cut -f1 -d.` = 10 && test `sw_vers -productVersion | cut -f2 -d.` -ge 10) && echo yes)
+TEST_DEPLOY_DIR=$(top_builddir)/build/test-deploy
 
 TEST_PROJECTS_MAC = \
 	MacPlatform.Tests/MacPlatform.Tests.csproj
 
 TEST_PROJECTS_COMMON = \
+	IdeUnitTests/IdeUnitTests.csproj \
 	UnitTests/UnitTests.csproj \
 	$(top_srcdir)/src/addins/MonoDevelop.Debugger/MonoDevelop.Debugger.Tests/MonoDevelop.Debugger.Tests.csproj
 
@@ -35,7 +38,8 @@ TEST_ASSEMBLIES_COMMON = \
 	$(TEST_DIR)/MonoDevelop.AspNet.Tests.dll \
 	$(TEST_DIR)/MonoDevelop.CSharpBinding.Tests.dll \
 	$(TEST_DIR)/MonoDevelop.DotNetCore.Tests.dll \
-    $(TEST_DIR)/MonoDevelop.UnitTesting.Tests.dll
+	$(TEST_DIR)/MonoDevelop.UnitTesting.Tests.dll \
+	$(TEST_DIR)/MonoDevelop.Refactoring.Tests.dll
 
 if RELEASE_BUILDS
 TEST_ASSEMBLIES_COMMON += $(EXTERNAL)/nrefactory/bin/Release/ICSharpCode.NRefactory.Tests.dll
@@ -122,6 +126,22 @@ coverage:
 			mprof-report --coverage-out=CoverageResult_`basename $$asm`.xml CoverageResult_`basename $$asm`.mlpd > /dev/null; \
 		done; \
 	fi
+
+deploy-tests:
+	mkdir -p "$(TEST_DEPLOY_DIR)/tests/test-projects"
+	cp -r $(TEST_DIR)/ "$(TEST_DEPLOY_DIR)/tests"; \
+	cp -r $(top_srcdir)/tests/test-projects "$(TEST_DEPLOY_DIR)/tests"; \
+	for asm in $(TEST_ASSEMBLIES); do \
+		if ! [ -e $(TEST_DIR)/`basename $$asm` ]; then \
+			cp -r `dirname $$asm`/* "$(TEST_DEPLOY_DIR)/tests"; \
+		fi \
+	done;
+
+performance-tests:
+	rm -rf $(TEST_DIR)/TestSolutions/ExampleFormsSolution
+	cd $(TEST_DIR)/TestSolutions; unzip ExampleFormsSolution.zip
+	$(RUN_TEST) -xml=TestResult_PerfTest.xml -labels $(TEST_DIR)/MonoDevelop.Ide.PerfTests.dll || exit $?;
+	mono $(TEST_DIR)/PerfTool.exe generate-results $(TEST_DIR)/Baseline_MonoDevelop.Ide.PerfTests.xml $(TEST_SRC_DIR)/TestResult_PerfTest.xml $(TEST_DIR)/PerformanceTestReport.xml
 
 include $(top_srcdir)/Makefile.include
 

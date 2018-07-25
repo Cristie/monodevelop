@@ -46,6 +46,7 @@ using MonoDevelop.Ide;
 using MonoDevelop.Projects;
 using Microsoft.CodeAnalysis;
 using System.Collections.Immutable;
+using MonoDevelop.Ide.CodeCompletion;
 
 namespace MonoDevelop.Refactoring
 { 
@@ -53,6 +54,7 @@ namespace MonoDevelop.Refactoring
 	{
 		internal static Func<TextEditor, DocumentContext, OptionSet> OptionSetCreation;
 		static ImmutableList<FindReferencesProvider> findReferencesProvider = ImmutableList<FindReferencesProvider>.Empty;
+		static ImmutableList<FindReferenceUsagesProvider> findReferenceUsagesProviders = ImmutableList<FindReferenceUsagesProvider>.Empty;
 		static List<JumpToDeclarationHandler> jumpToDeclarationHandler = new List<JumpToDeclarationHandler> ();
 
 		static RefactoringService ()
@@ -69,6 +71,18 @@ namespace MonoDevelop.Refactoring
 				}
 			});
 
+			AddinManager.AddExtensionNodeHandler ("/MonoDevelop/Refactoring/FindReferenceUsagesProvider", delegate(object sender, ExtensionNodeEventArgs args) {
+				var provider  = (FindReferenceUsagesProvider) args.ExtensionObject;
+				switch (args.Change) {
+				case ExtensionChange.Add:
+					findReferenceUsagesProviders = findReferenceUsagesProviders.Add (provider);
+					break;
+				case ExtensionChange.Remove:
+					findReferenceUsagesProviders = findReferenceUsagesProviders.Remove (provider);
+					break;
+				}
+			});
+
 			AddinManager.AddExtensionNodeHandler ("/MonoDevelop/Refactoring/JumpToDeclarationHandler", delegate(object sender, ExtensionNodeEventArgs args) {
 				var provider  = (JumpToDeclarationHandler) args.ExtensionObject;
 				switch (args.Change) {
@@ -80,6 +94,9 @@ namespace MonoDevelop.Refactoring
 					break;
 				}
 			});
+
+			//legacy option, no longer used
+			PropertyService.Set ("CodeActionUsages", null);
 		}
 		
 		class RenameHandler 
@@ -123,7 +140,6 @@ namespace MonoDevelop.Refactoring
 			var rctx = new RefactoringOptions (null, null);
 			var handler = new RenameHandler (changes);
 			FileService.FileRenamed += handler.FileRename;
-			var fileNames = new HashSet<FilePath> ();
 			var ws = TypeSystemService.Workspace as MonoDevelopWorkspace;
 			string originalName;
 			int originalOffset;
@@ -134,7 +150,6 @@ namespace MonoDevelop.Refactoring
 						continue;
 
 					if (ws.TryGetOriginalFileFromProjection (change.FileName, change.Offset, out originalName, out originalOffset)) {
-						fileNames.Add (change.FileName);
 						change.FileName = originalName;
 						change.Offset = originalOffset;
 					}
@@ -157,8 +172,6 @@ namespace MonoDevelop.Refactoring
 						if (change == null)
 							continue;
 
-						fileNames.Add (change.FileName);
-
 						if (replaceChange.Offset >= 0 && change.Offset >= 0 && replaceChange.FileName == change.FileName) {
 							if (replaceChange.Offset < change.Offset) {
 								change.Offset -= replaceChange.RemovedChars;
@@ -171,22 +184,9 @@ namespace MonoDevelop.Refactoring
 						}
 					}
 				}
-
-				foreach (var renameChange in changes.OfType<RenameFileChange> ()) {
-					if (fileNames.Contains (renameChange.OldName)) {
-						fileNames.Remove (renameChange.OldName);
-						fileNames.Add (renameChange.NewName);
-					}
-				}
-
-				foreach (var doc in IdeApp.Workbench.Documents) {
-					fileNames.Remove (doc.FileName);
-				}
-
 			} catch (Exception e) {
 				LoggingService.LogError ("Error while applying refactoring changes", e);
 			} finally {
-				FileService.NotifyFilesChanged (fileNames);
 				FileService.FileRenamed -= handler.FileRename;
 				TextReplaceChange.FinishRefactoringOperation ();
 			}
@@ -242,25 +242,58 @@ namespace MonoDevelop.Refactoring
 		{
 			if (hintProject == null)
 				hintProject = IdeApp.Workbench.ActiveDocument?.Project;
+			ITimeTracker timer = null;
 			var monitor = IdeApp.Workbench.ProgressMonitors.GetSearchProgressMonitor (true, true);
 			try {
+				var metadata = Counters.CreateFindReferencesMetadata ();
+				timer = Counters.FindReferences.BeginTiming (metadata);
+				var tasks = new List<(Task task, FindReferencesProvider provider)> (findReferencesProvider.Count);
 				foreach (var provider in findReferencesProvider) {
 					try {
-						foreach (var result in await provider.FindReferences (documentIdString, hintProject, monitor.CancellationToken)) {
-							monitor.ReportResult (result);
-						}
+						tasks.Add ((provider.FindReferences (documentIdString, hintProject, monitor), provider));
 					} catch (OperationCanceledException) {
+						metadata.SetUserCancel ();
 						return;
 					} catch (Exception ex) {
+						metadata.SetFailure ();
 						if (monitor != null)
 							monitor.ReportError ("Error finding references", ex);
 						LoggingService.LogError ("Error finding references", ex);
 						findReferencesProvider = findReferencesProvider.Remove (provider);
 					}
 				}
+				foreach (var task in tasks) {
+					try {
+						await task.task;
+					} catch (OperationCanceledException) {
+						metadata.SetUserCancel ();
+						return;
+					} catch (Exception ex) {
+						metadata.SetFailure ();
+						if (monitor != null)
+							monitor.ReportError ("Error finding references", ex);
+						LoggingService.LogError ("Error finding references", ex);
+						findReferencesProvider = findReferencesProvider.Remove (task.provider);
+					}
+				}
 			} finally {
 				if (monitor != null)
 					monitor.Dispose ();
+				if (timer != null)
+					timer.Dispose ();
+			}
+		}
+
+		public static async Task FindReferenceUsagesAsync(Projects.ProjectReference projectReference)
+		{
+			using (var monitor = IdeApp.Workbench.ProgressMonitors.GetSearchProgressMonitor (true, true)) {
+				try {
+					foreach (var provider in findReferenceUsagesProviders) {
+						await provider.FindReferences(projectReference, monitor);
+					}
+				} catch (Exception ex) {
+					LoggingService.LogError ("Error finding reference usages", ex);
+				}
 			}
 		}
 
@@ -268,25 +301,45 @@ namespace MonoDevelop.Refactoring
 		{
 			if (hintProject == null)
 				hintProject = IdeApp.Workbench.ActiveDocument?.Project;
+			ITimeTracker timer = null;
 			var monitor = IdeApp.Workbench.ProgressMonitors.GetSearchProgressMonitor (true, true);
 			try {
+				var metadata = Counters.CreateFindReferencesMetadata ();
+				timer = Counters.FindReferences.BeginTiming (metadata);
+				var tasks = new List<(Task task, FindReferencesProvider provider)> (findReferencesProvider.Count);
 				foreach (var provider in findReferencesProvider) {
 					try {
-						foreach (var result in await provider.FindAllReferences (documentIdString, hintProject, monitor.CancellationToken)) {
-							monitor.ReportResult (result);
-						}
+						tasks.Add ((provider.FindAllReferences (documentIdString, hintProject, monitor), provider));
 					} catch (OperationCanceledException) {
+						metadata.SetUserCancel ();
 						return;
 					} catch (Exception ex) {
+						metadata.SetFailure ();
 						if (monitor != null)
 							monitor.ReportError ("Error finding references", ex);
 						LoggingService.LogError ("Error finding references", ex);
 						findReferencesProvider = findReferencesProvider.Remove (provider);
 					}
 				}
+				foreach (var task in tasks) {
+					try {
+						await task.task;
+					} catch (OperationCanceledException) {
+						metadata.SetUserCancel ();
+						return;
+					} catch (Exception ex) {
+						metadata.SetFailure ();
+						if (monitor != null)
+							monitor.ReportError ("Error finding references", ex);
+						LoggingService.LogError ("Error finding references", ex);
+						findReferencesProvider = findReferencesProvider.Remove (task.provider);
+					}
+				}
 			} finally {
 				if (monitor != null)
 					monitor.Dispose ();
+				if (timer != null)
+					timer.Dispose ();
 			}
 		}
 
@@ -306,6 +359,40 @@ namespace MonoDevelop.Refactoring
 			}
 
 			return false;
+		}
+	}
+
+	internal static class Counters
+	{
+		public static TimerCounter<FindReferencesMetadata> FindReferences = InstrumentationService.CreateTimerCounter<FindReferencesMetadata> ("Find references", "Code Navigation", id: "CodeNavigation.FindReferences");
+		public static TimerCounter<FixesMenuMetadata> FixesMenu = InstrumentationService.CreateTimerCounter<FixesMenuMetadata> ("Show fixes", "Code Actions", id: "CodeActions.ShowFixes");
+
+		public static FindReferencesMetadata CreateFindReferencesMetadata ()
+		{
+			var metadata = new FindReferencesMetadata {
+				ResultString = "Success"
+			};
+			return metadata;
+		}
+
+		public class FindReferencesMetadata : CounterMetadata
+		{
+			public string ResultString {
+				get => (string)Properties["Result"];
+				set => Properties["Result"] = value;
+			}
+		}
+
+		public class FixesMenuMetadata : CounterMetadata
+		{
+			public FixesMenuMetadata ()
+			{
+			}
+
+			public bool TriggeredBySmartTag {
+				get => GetProperty<bool> ();
+				set => SetProperty (value);
+			}
 		}
 	}
 }

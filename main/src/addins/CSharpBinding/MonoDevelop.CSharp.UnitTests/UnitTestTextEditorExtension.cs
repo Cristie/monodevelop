@@ -56,18 +56,18 @@ namespace MonoDevelop.CSharp
 			return false;
 		}
 
-		public override Task<IList<UnitTestLocation>> GatherUnitTests (IUnitTestMarkers[] unitTestMarkers, CancellationToken token)
+		public override async Task<IList<UnitTestLocation>> GatherUnitTests (IUnitTestMarkers[] unitTestMarkers, CancellationToken token)
 		{
-			var parsedDocument = DocumentContext.ParsedDocument;
-			if (parsedDocument == null)
-				return Task.FromResult (emptyList);
+			var analysisDocument = DocumentContext.AnalysisDocument;
+			if (analysisDocument == null)
+				return emptyList;
 			
-			var semanticModel = parsedDocument.GetAst<SemanticModel> ();
+			var semanticModel = await analysisDocument.GetSemanticModelAsync (token);
 			if (semanticModel == null)
-				return Task.FromResult (emptyList);
+				return emptyList;
 
 			if (!HasMethodMarkerAttribute (semanticModel, unitTestMarkers))
-				return Task.FromResult (emptyList);
+				return emptyList;
 
 			var visitor = new NUnitVisitor (semanticModel, unitTestMarkers, token);
 			try {
@@ -76,9 +76,9 @@ namespace MonoDevelop.CSharp
 				throw;
 			}catch (Exception ex) {
 				LoggingService.LogError ("Exception while analyzing ast for unit tests.", ex);
-				return Task.FromResult (emptyList);
+				return emptyList;
 			}
-			return Task.FromResult (visitor.FoundTests);
+			return visitor.FoundTests;
 		}
 
 		class NUnitVisitor : CSharpSyntaxWalker
@@ -136,7 +136,7 @@ namespace MonoDevelop.CSharp
 
 			static string BuildArguments (AttributeData attr)
 			{
-				var sb = new StringBuilder ();
+				var sb = StringBuilderCache.Allocate ();
 				ImmutableArray<TypedConstant> args;
 				if (attr.ConstructorArguments.Length == 1 && attr.ConstructorArguments [0].Kind == TypedConstantKind.Array)
 					args = attr.ConstructorArguments [0].Values;
@@ -150,7 +150,7 @@ namespace MonoDevelop.CSharp
 
 					AddArgument (args [i], sb);
 				}
-				return sb.ToString ();
+				return StringBuilderCache.ReturnAndFree (sb);
 			}
 
 			static void AddArgument(TypedConstant arg, StringBuilder sb)
@@ -181,7 +181,7 @@ namespace MonoDevelop.CSharp
 				IUnitTestMarkers markers = null;
 				foreach (var attr in method.GetAttributes ()) {
 					var cname = attr.AttributeClass.GetFullName ();
-					markers = unitTestMarkers.FirstOrDefault (m => (m.TestMethodAttributeMarker == cname || m.TestCaseMethodAttributeMarker == cname));
+					markers = unitTestMarkers.FirstOrDefault (m => (m.TestMethodAttributeMarker == cname || m.TestCaseMethodAttributeMarker == cname || (m as IUnitTestMarkers2)?.TestCaseSourceAttributeMarker == cname));
 					if (markers != null) {
 						if (test == null) {
 							TagClass (parentClass, markers);

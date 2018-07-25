@@ -61,7 +61,17 @@ namespace MonoDevelop.Ide.Editor
 		/// <summary>
 		/// The text is grayed out.
 		/// </summary>
-		GrayOut
+		GrayOut,
+
+		/// <summary>
+		/// Just a simple underline
+		/// </summary>
+		Underline,
+
+		/// <summary>
+		/// Marks the background of the text as block
+		/// </summary>
+		Background
 	}
 
 	public interface IGenericTextSegmentMarker : ITextSegmentMarker

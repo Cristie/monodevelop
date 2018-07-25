@@ -43,18 +43,23 @@ namespace MonoDevelop.Ide.Editor.TextMate
 		protected override void Initialize ()
 		{
 			Editor.TextChanged += UpdateFoldings;
-
-			var startScope = Editor.SyntaxHighlighting.GetScopeStackAsync (0, CancellationToken.None).WaitAndGetResult (CancellationToken.None);
-			var lang = TextMateLanguage.Create (startScope);
-			foldingStartMarker = lang.FoldingStartMarker;
-			foldingStopMarker = lang.FoldingStopMarker;
-			UpdateFoldings (null, null);
+			try {
+				var startScope = Editor.SyntaxHighlighting.GetScopeStackAsync (0, CancellationToken.None).WaitAndGetResult (CancellationToken.None);
+				var lang = TextMateLanguage.Create (startScope);
+				foldingStartMarker = lang.FoldingStartMarker;
+				foldingStopMarker = lang.FoldingStopMarker;
+				UpdateFoldings (null, null);
+			} catch (Exception e) {
+				LoggingService.LogError ("Error while initializing text mate folding text editor extension.", e);
+				Editor.TextChanged -= UpdateFoldings;
+			}
 		}
 
 
 		public override void Dispose ()
 		{
 			Editor.TextChanged -= UpdateFoldings;
+			base.Dispose ();
 		}
 
 		struct LineInfo {

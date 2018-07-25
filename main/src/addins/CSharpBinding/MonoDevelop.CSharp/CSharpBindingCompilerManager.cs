@@ -26,24 +26,24 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Diagnostics;
-using System.Text.RegularExpressions;
 using System.Text;
-
-using MonoDevelop.Projects;
-using MonoDevelop.Core;
-using MonoDevelop.Core.Execution;
-using MonoDevelop.Core.Assemblies;
-using MonoDevelop.CSharp.Project;
+using System.Text.RegularExpressions;
 using System.Threading;
+
+using MonoDevelop.Core;
+using MonoDevelop.Core.Assemblies;
+using MonoDevelop.Core.Execution;
+using MonoDevelop.CSharp.Project;
 using MonoDevelop.Ide;
-using MonoDevelop.Core.ProgressMonitoring;
+using MonoDevelop.Projects;
 
 
 namespace MonoDevelop.CSharp
 {
+	[Obsolete]
 	static class CSharpBindingCompilerManager
 	{	
 		static void AppendQuoted (StringBuilder sb, string option, string val)
@@ -99,7 +99,7 @@ namespace MonoDevelop.CSharp
 				return null;
 			}
 
-			var sb = new StringBuilder ();
+			var sb = StringBuilderCache.Allocate ();
 
 			HashSet<string> alreadyAddedReference = new HashSet<string> ();
 
@@ -332,7 +332,7 @@ namespace MonoDevelop.CSharp
 				workingDir = configuration.ParentItem.BaseDirectory;
 
 			LoggingService.LogInfo (compilerName + " " + sb);
-
+			StringBuilderCache.Free (sb);
 			ExecutionEnvironment envVars = runtime.GetToolsExecutionEnvironment (project.TargetFramework);
 			string cargs = "/noconfig @\"" + responseFileName + "\"";
 
@@ -375,7 +375,7 @@ namespace MonoDevelop.CSharp
 		{
 			BuildResult result = new BuildResult ();
 			
-			StringBuilder compilerOutput = new StringBuilder ();
+			StringBuilder compilerOutput = StringBuilderCache.Allocate ();
 			bool typeLoadException = false;
 			foreach (string s in new string[] { stdout, stderr }) {
 				StreamReader sr = File.OpenText (s);
@@ -414,7 +414,7 @@ namespace MonoDevelop.CSharp
 				else
 					result.AddError ("", 0, 0, "", "Error: A dependency of a referenced assembly may be missing, or you may be referencing an assembly created with a newer CLR version. See the compilation output for more details.");
 			}
-			result.CompilerOutput = compilerOutput.ToString ();
+			result.CompilerOutput = StringBuilderCache.ReturnAndFree (compilerOutput);
 			return result;
 		}
 		

@@ -378,13 +378,6 @@ namespace MonoDevelop.GtkCore.GuiBuilder
 			if (saveToFile)
 				File.WriteAllText (fileName, text);
 			TypeSystemService.NotifyFileChange (fileName, text);
-//			
-//			if (ProjectDomService.HasDom (project)) {
-//				// Only update the parser database if the project is actually loaded in the IDE.
-//				ProjectDomService.Parse (project, fileName, text);
-//				if (saveToFile) 
-//					FileService.NotifyFileChanged (fileName);
-//			}
 
 			return fileName;
 		}
@@ -436,13 +429,7 @@ namespace MonoDevelop.GtkCore.GuiBuilder
 					return null;
 	
 				monitor.Log.WriteLine (GettextCatalog.GetString ("Generating GUI code for project '{0}'...", project.Name));
-				
-				timer.Trace ("Copy support files");
-				
-				// Make sure the referenced assemblies are up to date. It is necessary to do
-				// it now since they may contain widget libraries.
-				project.CopySupportFiles (monitor, configuration);
-				
+
 				timer.Trace ("Update libraries");
 				
 				info.GuiBuilderProject.UpdateLibraries ();
@@ -534,8 +521,7 @@ namespace MonoDevelop.GtkCore.GuiBuilder
 						timer.Trace ("Writing code");
 						File.WriteAllText (fname, content);
 					} finally {
-						timer.Trace ("Notifying changes");
-						FileService.NotifyFileChanged (fname);
+						timer.Trace ("Code written to file");
 					}
 				}
 				

@@ -32,6 +32,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.FindSymbols;
+using Microsoft.CodeAnalysis.NavigateTo;
 using MonoDevelop.Components.MainToolbar;
 
 namespace MonoDevelop.CSharp
@@ -39,18 +40,8 @@ namespace MonoDevelop.CSharp
 	// Copied from StockIcons.cs and extended for the c# ast (c# AST shouldn't be in Ide)
 	static class AstStockIcons
 	{
-		static readonly IconId Class = "md-class";
-		static readonly IconId Enum = "md-enum";
-		static readonly IconId Event = "md-event";
-		static readonly IconId Field = "md-field";
-		static readonly IconId Interface = "md-interface";
-		static readonly IconId Method = "md-method";
-		static readonly IconId Property = "md-property";
-		static readonly IconId Struct = "md-struct";
-		static readonly IconId Delegate = "md-delegate";
 		// static readonly IconId Constant = "md-literal";
 		public static readonly IconId Namespace = "md-name-space";
-
 			
 		static void AdjustAccessibility (SyntaxTokenList modifiers, ref Accessibility acc, ref bool isStatic, ref bool result)
 		{
@@ -208,44 +199,6 @@ namespace MonoDevelop.CSharp
 		static string GetAccess (Accessibility acc)
 		{
 			return MonoDevelop.Ide.TypeSystem.Stock.GetAccess (acc);
-		}
-
-		internal static IconId GetStockIconForSymbolInfo (this DeclaredSymbolInfoWrapper symbol)
-		{
-			switch (symbol.SymbolInfo.Kind) {
-			case DeclaredSymbolInfoKind.Class:
-				return AstStockIcons.Class;
-			case DeclaredSymbolInfoKind.Constant:
-				return AstStockIcons.Field;
-			case DeclaredSymbolInfoKind.Constructor:
-				return AstStockIcons.Method;
-			case DeclaredSymbolInfoKind.Delegate:
-				return AstStockIcons.Delegate;
-			case DeclaredSymbolInfoKind.Enum:
-				return AstStockIcons.Enum;
-			case DeclaredSymbolInfoKind.EnumMember:
-				return AstStockIcons.Field;
-			case DeclaredSymbolInfoKind.Event:
-				return AstStockIcons.Event;
-			case DeclaredSymbolInfoKind.ExtensionMethod:
-				return AstStockIcons.Method;
-			case DeclaredSymbolInfoKind.Field:
-				return AstStockIcons.Field;
-			case DeclaredSymbolInfoKind.Indexer:
-				return AstStockIcons.Method;
-			case DeclaredSymbolInfoKind.Interface:
-				return AstStockIcons.Interface;
-			case DeclaredSymbolInfoKind.Method:
-				return AstStockIcons.Method;
-			case DeclaredSymbolInfoKind.Module:
-				return AstStockIcons.Method;
-			case DeclaredSymbolInfoKind.Property:
-				return AstStockIcons.Property;
-			case DeclaredSymbolInfoKind.Struct:
-				return AstStockIcons.Struct;
-			default:
-				throw new ArgumentOutOfRangeException ();
-			}
 		}
 	}
 }

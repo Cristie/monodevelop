@@ -568,6 +568,35 @@ namespace Mono.TextEditor.Tests
 			Assert.AreEqual (new DocumentLocation (2, 6), data.Caret.Location);
 			Assert.AreEqual ("\n\t\tFooBar", data.Document.Text);
 		}
+
+		/// <summary>
+		/// Virtual indentation handling broken #4489 
+		/// https://github.com/mono/monodevelop/issues/4489
+		/// </summary>
+		[Test]
+		public void TestIssue4489 ()
+		{
+			var data = CreateDataWithSpaces ("\n\t\t\n\n");
+			var tracker = new SmartIndentModeTests.TestIndentTracker ();
+			tracker.SetIndent (1, "    ");
+			data.IndentationTracker = tracker;
+			data.Caret.Location = new DocumentLocation (2, 2);
+			data.FixVirtualIndentation ();
+			Assert.AreEqual ("\n\n\n", data.Document.Text);
+		}
+
+		/// <summary>
+		/// Github issue #5279 Text Editor outdents to hard left instead of going back an indent level 
+		/// </summary>
+		[Test]
+		public void TestIssue5279 ()
+		{
+			var data = CreateData ("\n\n\n");
+			data.IndentationTracker = new SmartIndentModeTests.TestIndentTracker ();
+			data.Caret.Location = new DocumentLocation (2, 3);
+			MiscActions.RemoveTab (data);
+			Assert.AreEqual ("\n\t\n\n", data.Document.Text);
+		}
 	}
 }
 

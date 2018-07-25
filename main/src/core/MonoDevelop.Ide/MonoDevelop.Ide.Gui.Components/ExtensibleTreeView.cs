@@ -32,20 +32,16 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
-
 using Mono.Addins;
-using MonoDevelop.Core;
 using MonoDevelop.Components;
-using MonoDevelop.Components.AtkCocoaHelper;
-using MonoDevelop.Ide.Commands;
 using MonoDevelop.Components.Commands;
+using MonoDevelop.Core;
+using MonoDevelop.Ide.Commands;
+using MonoDevelop.Ide.Extensions;
 using MonoDevelop.Ide.Gui.Pads;
 using MonoDevelop.Projects.Extensions;
-using System.Linq;
-using MonoDevelop.Ide.Tasks;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 
 namespace MonoDevelop.Ide.Gui.Components
 {
@@ -68,7 +64,7 @@ namespace MonoDevelop.Ide.Gui.Components
 		ZoomableCellRendererPixbuf pix_render;
 		CustomCellRendererText text_render;
 		TreeBuilderContext builderContext;
-		Hashtable callbacks = new Hashtable ();
+		Dictionary<object, List<TreeNodeCallback>> callbacks = new Dictionary<object, List<TreeNodeCallback>> ();
 		bool editingText = false;
 
 		TreePadOption[] options;
@@ -631,9 +627,14 @@ namespace MonoDevelop.Ide.Gui.Components
 
 		public ITreeBuilder AddChild (object nodeObject)
 		{
+			return AddChild (nodeObject, true);
+		}
+
+		public ITreeBuilder AddChild (object nodeObject, bool expanded)
+		{
 			TreeBuilder builder = new TreeBuilder (this);
 			builder.AddChild (nodeObject, true);
-			builder.Expanded = true;
+			builder.Expanded = expanded;
 			InitialSelection ();
 			return builder;
 		}
@@ -829,11 +830,10 @@ namespace MonoDevelop.Ide.Gui.Components
 				return;
 			}
 
-			ArrayList list = callbacks [dataObject] as ArrayList;
-			if (list != null)
+			if (callbacks.TryGetValue (dataObject, out var list)) {
 				list.Add (callback);
-			else {
-				list = new ArrayList ();
+			} else {
+				list = new List<TreeNodeCallback> ();
 				list.Add (callback);
 				callbacks [dataObject] = list;
 			}
@@ -846,9 +846,9 @@ namespace MonoDevelop.Ide.Gui.Components
 
 		class MulticastNodeRouter: IMultiCastCommandRouter
 		{
-			ArrayList targets;
+			List<NodeCommandTargetChain> targets;
 
-			public MulticastNodeRouter (ArrayList targets)
+			public MulticastNodeRouter (List<NodeCommandTargetChain> targets)
 			{
 				this.targets = targets;
 			}
@@ -868,7 +868,7 @@ namespace MonoDevelop.Ide.Gui.Components
 			if (editingText)
 				return null;
 
-			ArrayList targets = new ArrayList ();
+			List<NodeCommandTargetChain> targets = new List<NodeCommandTargetChain> ();
 
 			foreach (SelectionGroup grp in GetSelectedNodesGrouped ()) {
 				NodeBuilder[] chain = grp.BuilderChain;
@@ -1361,27 +1361,31 @@ namespace MonoDevelop.Ide.Gui.Components
 
 			node.ExpandToNode (); //make sure the parent of the node that is being edited is expanded
 
-			string nodeName = node.NodeName;
-
-			GetNodeInfo (iter).Label = GLib.Markup.EscapeText (nodeName);
-			store.EmitRowChanged (store.GetPath (iter), iter);
+			string editText = node.NodeName;
 
 			// Get and validate the initial text selection
-			int nameLength = nodeName != null ? nodeName.Length : 0,
-				selectionStart = 0, selectionLength = nameLength;
+			int editTextLength = editText != null ? editText.Length : 0,
+				selectionStart = 0, selectionLength = editTextLength;
+
 			foreach (NodeBuilder b in node.NodeBuilderChain) {
 				try {
 					NodeCommandHandler handler = b.CommandHandler;
 					handler.SetCurrentNode(node);
-					handler.OnRenameStarting(ref selectionStart, ref selectionLength);
+					handler.OnRenameStarting(ref editText, ref selectionStart, ref selectionLength);
 				} catch (Exception ex) {
 					LoggingService.LogError (ex.ToString ());
 				}
 			}
-			if (selectionStart < 0 || selectionStart >= nameLength)
+
+			editTextLength = editText != null ? editText.Length : 0;
+
+			GetNodeInfo (iter).Label = GLib.Markup.EscapeText (editText);
+			store.EmitRowChanged (store.GetPath (iter), iter);
+
+			if (selectionStart < 0 || selectionStart >= editTextLength)
 				selectionStart = 0;
-			if (selectionStart + selectionLength > nameLength)
-				selectionLength = nameLength - selectionStart;
+			if (selectionStart + selectionLength > editTextLength)
+				selectionLength = editTextLength - selectionStart;
 			// This will apply the selection as soon as possible
 			GLib.Idle.Add (() => {
 				var editable = currentLabelEditable;
@@ -1717,7 +1721,7 @@ namespace MonoDevelop.Ide.Gui.Components
 			if (copyObjects != null) {
 				int i = Array.IndexOf (copyObjects, dataObject);
 				if (i != -1) {
-					ArrayList list = new ArrayList (copyObjects);
+					var list = new List<object> (copyObjects);
 					list.RemoveAt (i);
 					if (list.Count > 0)
 						copyObjects = list.ToArray ();
@@ -1731,7 +1735,7 @@ namespace MonoDevelop.Ide.Gui.Components
 			if (tree.dragObjects != null) {
 				int i = Array.IndexOf (tree.dragObjects, dataObject);
 				if (i != -1) {
-					ArrayList list = new ArrayList (tree.dragObjects);
+					var list = new List<object> (tree.dragObjects);
 					list.RemoveAt (i);
 					if (list.Count > 0)
 						tree.dragObjects = list.ToArray ();
@@ -1801,8 +1805,7 @@ namespace MonoDevelop.Ide.Gui.Components
 		internal void NotifyInserted (Gtk.TreeIter it, object dataObject)
 		{
 			if (callbacks.Count > 0) {
-				ArrayList list = callbacks [dataObject] as ArrayList;
-				if (list != null) {
+				if (callbacks.TryGetValue (dataObject, out var list)) {
 					ITreeNavigator nav = new TreeNodeNavigator (this, it);
 					NodePosition pos = nav.CurrentPosition;
 					foreach (TreeNodeCallback callback in list) {
@@ -1972,6 +1975,12 @@ namespace MonoDevelop.Ide.Gui.Components
 			} else {
 				ExtensionContext ctx = AddinManager.CreateExtensionContext ();
 				ctx.RegisterCondition ("ItemType", new ItemTypeCondition (tnav.DataItem.GetType (), contextMenuTypeNameAliases));
+				if (tnav.DataItem is MonoDevelop.Projects.IFileItem fileItem) {
+					var fileTypeCondition = new FileTypeCondition ();
+					fileTypeCondition.SetFileName (fileItem.FileName);
+					ctx.RegisterCondition ("FileType", fileTypeCondition);
+				}
+
 				CommandEntrySet eset = IdeApp.CommandService.CreateCommandEntrySet (ctx, menuPath);
 
 				eset.AddItem (Command.Separator);

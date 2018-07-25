@@ -53,7 +53,6 @@ namespace MonoDevelop.Ide.CodeFormatting
 			this.formatter = formatter;
 		}
 
-		[Obsolete("Use Format (PolicyContainer policyParent, ITextSource input, ISegment segment = null) instead. This function is going to be removed.")]
 		public ITextSource Format (PolicyContainer policyParent, ITextSource input, int fromOffset, int toOffset)
 		{
 			return formatter.Format (policyParent, mimeType, input, fromOffset, toOffset);
@@ -73,7 +72,6 @@ namespace MonoDevelop.Ide.CodeFormatting
 			}
 		}
 
-		[Obsolete("Use FormatText (PolicyContainer policyParent, string input, ISegment segment) instead. This function is going to be removed.")]
 		public string FormatText (PolicyContainer policyParent, string input, int fromOffset, int toOffset)
 		{
 			return formatter.FormatText (policyParent, mimeType, input, fromOffset, toOffset);

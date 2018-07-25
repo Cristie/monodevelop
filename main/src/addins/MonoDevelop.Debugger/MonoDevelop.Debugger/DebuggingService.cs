@@ -48,6 +48,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Collections.Concurrent;
 using System.Threading;
+using MonoDevelop.Core.Instrumentation;
+using MonoDevelop.Components;
 
 namespace MonoDevelop.Debugger
 {
@@ -106,7 +108,21 @@ namespace MonoDevelop.Debugger
 				// Refresh the evaluators list
 				evaluators = null;
 			});
+			IdeApp.Exiting += IdeApp_Exiting;
 		}
+
+		static void IdeApp_Exiting (object sender, ExitEventArgs args)
+		{
+			if (!IsDebugging)
+				return;
+			if (MessageService.Confirm (GettextCatalog.GetString (
+						"The debugger is currently running and will have to be stopped. Do you want to stop debugging?"),
+						new AlertButton (GettextCatalog.GetString ("Stop Debugging")))) {
+				Stop ();
+			} else
+				args.Cancel = true;
+		}
+
 
 		public static IExecutionHandler GetExecutionHandler ()
 		{
@@ -592,8 +608,7 @@ namespace MonoDevelop.Debugger
 		{
 			var session = debugger.CreateSession ();
 			var monitor = IdeApp.Workbench.ProgressMonitors.GetRunProgressMonitor (proc.Name);
-			var sessionManager = new SessionManager (session, monitor.Console, debugger);
-			session.ExceptionHandler = ExceptionHandler;
+			var sessionManager = new SessionManager (session, monitor.Console, debugger, null);
 			SetupSession (sessionManager);
 			session.TargetExited += delegate {
 				monitor.Dispose ();
@@ -664,11 +679,22 @@ namespace MonoDevelop.Debugger
 
 		internal static ProcessAsyncOperation InternalRun (ExecutionCommand cmd, DebuggerEngine factory, OperationConsole c)
 		{
+			// Start assuming success, update on failure
+			var metadata = new DebuggerStartMetadata {
+				Result = CounterResult.Success
+			};
+			var timer = Counters.DebuggerStart.BeginTiming (metadata);
+
 			if (factory == null) {
 				factory = GetFactoryForCommand (cmd);
-				if (factory == null)
+				if (factory == null) {
+					metadata.SetFailure ();
+					timer.Dispose ();
 					throw new InvalidOperationException ("Unsupported command: " + cmd);
+				}
 			}
+
+			metadata.Name = factory.Name;
 
 			DebuggerStartInfo startInfo = factory.CreateDebuggerStartInfo (cmd);
 			startInfo.UseExternalConsole = c is ExternalConsole;
@@ -676,23 +702,25 @@ namespace MonoDevelop.Debugger
 				startInfo.CloseExternalConsoleOnExit = ((ExternalConsole)c).CloseOnDispose;
 
 			var session = factory.CreateSession ();
-			session.ExceptionHandler = ExceptionHandler;
 
 			SessionManager sessionManager;
 			// When using an external console, create a new internal console which will be used
 			// to show the debugger log
 			if (startInfo.UseExternalConsole)
-				sessionManager = new SessionManager (session, IdeApp.Workbench.ProgressMonitors.GetRunProgressMonitor (System.IO.Path.GetFileNameWithoutExtension (startInfo.Command)).Console, factory);
+				sessionManager = new SessionManager (session, IdeApp.Workbench.ProgressMonitors.GetRunProgressMonitor (System.IO.Path.GetFileNameWithoutExtension (startInfo.Command)).Console, factory, timer);
 			else
-				sessionManager = new SessionManager (session, c, factory);
+				sessionManager = new SessionManager (session, c, factory, timer);
 			SetupSession (sessionManager);
 
 			SetDebugLayout ();
 
 			try {
+				sessionManager.PrepareForRun ();
 				session.Run (startInfo, GetUserOptions ());
 			} catch {
+				sessionManager.SessionError = true;
 				Cleanup (sessionManager);
+				metadata.SetFailure ();
 				throw;
 			}
 			return sessionManager.debugOperation;
@@ -713,15 +741,26 @@ namespace MonoDevelop.Debugger
 		{
 			OperationConsole console;
 			IDisposable cancelRegistration;
+			System.Diagnostics.Stopwatch firstAssemblyLoadTimer;
+
 			public readonly DebuggerSession Session;
 			public readonly DebugAsyncOperation debugOperation;
 			public readonly DebuggerEngine Engine;
+			internal ITimeTracker<DebuggerStartMetadata> StartTimer { get; set; }
 
-			public SessionManager (DebuggerSession session, OperationConsole console, DebuggerEngine engine)
+			internal bool TrackActionTelemetry { get; set; }
+			internal DebuggerActionMetadata.ActionType CurrentAction { get; set; }
+			internal ITimeTracker ActionTimeTracker { get; set; }
+
+			public SessionManager (DebuggerSession session, OperationConsole console, DebuggerEngine engine, ITimeTracker<DebuggerStartMetadata> timeTracker)
 			{
 				Engine = engine;
 				Session = session;
+				session.ExceptionHandler = ExceptionHandler;
+				session.AssemblyLoaded += OnAssemblyLoaded;
 				this.console = console;
+				StartTimer = timeTracker;
+
 				cancelRegistration = console.CancellationToken.Register (Cancel);
 				debugOperation = new DebugAsyncOperation (session);
 			}
@@ -729,6 +768,7 @@ namespace MonoDevelop.Debugger
 			void Cancel ()
 			{
 				Session.Exit ();
+				StartTimer?.Metadata.SetUserCancel ();
 				Cleanup (this);
 			}
 
@@ -761,12 +801,88 @@ namespace MonoDevelop.Debugger
 
 			public void Dispose ()
 			{
+				UpdateDebugSessionCounter ();
+				UpdateEvaluationStatsCounter ();
+
 				console?.Dispose ();
 				console = null;
+				Session.AssemblyLoaded -= OnAssemblyLoaded;
 				Session.Dispose ();
 				debugOperation.Cleanup ();
 				cancelRegistration?.Dispose ();
 				cancelRegistration = null;
+
+				StartTimer?.Dispose ();
+			}
+
+			bool sessionError;
+			/// <summary>
+			/// Indicates whether the debug session failed to an exception or any debugger
+			/// operation failed and was reported to the user.
+			/// </summary>
+			public bool SessionError {
+				get => sessionError;
+				set {
+					sessionError = value;
+					StartTimer?.Metadata.SetFailure ();
+				}
+			}
+
+			void UpdateDebugSessionCounter ()
+			{
+				var metadata = new Dictionary<string, string> ();
+				metadata ["Success"] = (!SessionError).ToString ();
+				metadata ["DebuggerType"] = Engine.Id;
+
+				if (firstAssemblyLoadTimer != null) {
+					if (firstAssemblyLoadTimer.IsRunning) {
+						// No first assembly load event.
+						firstAssemblyLoadTimer.Stop ();
+					} else {
+						metadata ["AssemblyFirstLoadDuration"] = firstAssemblyLoadTimer.ElapsedMilliseconds.ToString ();
+					}
+				}
+
+				Counters.DebugSession.Inc (metadata);
+			}
+
+			void UpdateEvaluationStatsCounter ()
+			{
+				if (Session.EvaluationStats.TimingsCount == 0 && Session.EvaluationStats.FailureCount == 0) {
+					// No timings or failures recorded.
+					return;
+				}
+
+				var metadata = new Dictionary<string, string> ();
+				metadata ["DebuggerType"] = Engine.Id;
+				metadata ["AverageDuration"] = Session.EvaluationStats.AverageTime.ToString ();
+				metadata ["MaximumDuration"] = Session.EvaluationStats.MaxTime.ToString ();
+				metadata ["MinimumDuration"] = Session.EvaluationStats.MinTime.ToString ();
+				metadata ["FailureCount"] = Session.EvaluationStats.FailureCount.ToString ();
+				metadata ["SuccessCount"] = Session.EvaluationStats.TimingsCount.ToString ();
+
+				Counters.EvaluationStats.Inc (metadata);
+			}
+
+			bool ExceptionHandler (Exception ex)
+			{
+				SessionError = true;
+				return DebuggingService.ExceptionHandler (ex);
+			}
+
+			/// <summary>
+			/// Called just before DebugSession.Run is called.
+			/// </summary>
+			public void PrepareForRun ()
+			{
+				firstAssemblyLoadTimer = new System.Diagnostics.Stopwatch ();
+				firstAssemblyLoadTimer.Start ();
+			}
+
+			void OnAssemblyLoaded (object sender, AssemblyEventArgs e)
+			{
+				DebuggerSession.AssemblyLoaded -= OnAssemblyLoaded;
+				firstAssemblyLoadTimer?.Stop ();
 			}
 		}
 
@@ -809,6 +925,7 @@ namespace MonoDevelop.Debugger
 		static void OnStarted (object s, EventArgs a)
 		{
 			nextStatementLocations.Clear ();
+
 			if (currentSession?.Session == s) {
 				currentBacktrace = null;
 				currentSession = null;
@@ -831,6 +948,7 @@ namespace MonoDevelop.Debugger
 				return;
 			nextStatementLocations.Clear ();
 
+			SessionManager sessionManager = null;
 			try {
 				switch (args.Type) {
 				case TargetEventType.TargetExited:
@@ -846,21 +964,42 @@ namespace MonoDevelop.Debugger
 				case TargetEventType.UnhandledException:
 				case TargetEventType.ExceptionThrown:
 					var action = new Func<bool> (delegate {
-						SessionManager sessionManager;
 						if (!sessions.TryGetValue (session, out sessionManager))
 							return false;
+
+						if (sessionManager.TrackActionTelemetry) {
+							var metadata = new DebuggerActionMetadata () {
+								Type = sessionManager.CurrentAction
+							};
+							sessionManager.ActionTimeTracker = Counters.DebuggerAction.BeginTiming ("Debugger action", metadata);
+						}
 						Breakpoints.RemoveRunToCursorBreakpoints ();
 						currentSession = sessionManager;
 						ActiveThread = args.Thread;
-						NotifyPaused ();
+						NotifyPaused (currentSession);
 						NotifyException (args);
 						return true;
 					});
 					if (currentSession != null && currentSession != sessions [session]) {
 						StopsQueue.Enqueue (action);
-						NotifyPaused ();//Notify about pause again, so ThreadsPad can update, to show all processes
+						NotifyPaused (null);//Notify about pause again, so ThreadsPad can update, to show all processes
 					} else {
 						action ();
+					}
+					break;
+				case TargetEventType.TargetReady:
+					if (!sessions.TryGetValue (session, out sessionManager)) {
+						return;
+					}
+
+					sessionManager.StartTimer?.Metadata.SetSuccess ();
+
+					sessionManager.StartTimer?.Dispose ();
+					sessionManager.StartTimer = null;
+
+					if (Ide.Counters.TrackingBuildAndDeploy) {
+						Ide.Counters.BuildAndDeploy.EndTiming ();
+						Ide.Counters.TrackingBuildAndDeploy = false;
 					}
 					break;
 				}
@@ -876,7 +1015,7 @@ namespace MonoDevelop.Debugger
 				handler (null, e);
 		}
 
-		static void NotifyPaused ()
+		static void NotifyPaused (SessionManager sessionManager)
 		{
 			Runtime.RunInMainThread (delegate {
 				stepSwitchCts?.Cancel ();
@@ -884,6 +1023,16 @@ namespace MonoDevelop.Debugger
 					PausedEvent (null, EventArgs.Empty);
 				NotifyLocationChanged ();
 				IdeApp.Workbench.GrabDesktopFocus ();
+
+			}).ContinueWith ((arg) => {
+				// PausedEventHandlers may queue additional UI events that can cause a freeze.
+				// Ensure those UI events have completed before we stop tracking the time.
+				Runtime.RunInMainThread (() => {
+					if (sessionManager.TrackActionTelemetry) {
+						sessionManager.ActionTimeTracker.Dispose ();
+						sessionManager.TrackActionTelemetry = false;
+					}
+				});
 			});
 		}
 
@@ -932,10 +1081,15 @@ namespace MonoDevelop.Debugger
 
 		public static void StepInto ()
 		{
+
 			Runtime.AssertMainThread ();
 
 			if (!IsDebugging || !IsPaused || CheckIsBusy ())
 				return;
+
+			currentSession.TrackActionTelemetry = true;
+			currentSession.CurrentAction = DebuggerActionMetadata.ActionType.StepInto;
+
 			currentSession.Session.StepLine ();
 			NotifyLocationChanged ();
 			DelayHandleStopQueue ();
@@ -947,6 +1101,10 @@ namespace MonoDevelop.Debugger
 
 			if (!IsDebugging || !IsPaused || CheckIsBusy ())
 				return;
+
+			currentSession.TrackActionTelemetry = true;
+			currentSession.CurrentAction = DebuggerActionMetadata.ActionType.StepOver;
+
 			currentSession.Session.NextLine ();
 			NotifyLocationChanged ();
 			DelayHandleStopQueue ();
@@ -958,6 +1116,10 @@ namespace MonoDevelop.Debugger
 
 			if (!IsDebugging || !IsPaused || CheckIsBusy ())
 				return;
+
+			currentSession.TrackActionTelemetry = true;
+			currentSession.CurrentAction = DebuggerActionMetadata.ActionType.StepOut;
+
 			currentSession.Session.Finish ();
 			NotifyLocationChanged ();
 			DelayHandleStopQueue ();
@@ -1243,6 +1405,25 @@ namespace MonoDevelop.Debugger
 
 			return info != null ? info.Evaluator : null;
 		}
+
+		static Task<CompletionData> GetExpressionCompletionData (string exp, StackFrame frame, CancellationToken token)
+		{
+			Document doc = IdeApp.Workbench.GetDocument (frame.SourceLocation.FileName);
+			if (doc == null)
+				return null;
+			var completionProvider = doc.GetContent<IDebuggerCompletionProvider> ();
+			if (completionProvider == null)
+				return null;
+			return completionProvider.GetExpressionCompletionData (exp, frame, token);
+		}
+
+		public static async Task<CompletionData> GetCompletionDataAsync (StackFrame frame, string exp, CancellationToken token = default (CancellationToken))
+		{
+			var result = await GetExpressionCompletionData (exp, frame, token);
+			if (result != null)
+				return result;
+			return frame.GetExpressionCompletionData (exp);
+		}
 	}
 
 	class FeatureCheckerHandlerFactory : IExecutionHandler
@@ -1284,7 +1465,9 @@ namespace MonoDevelop.Debugger
 
 	class StatusBarConnectionDialog : IConnectionDialog
 	{
+		#pragma warning disable 67 //never used
 		public event EventHandler UserCancelled;
+		#pragma warning restore 67
 
 		public void SetMessage (DebuggerStartInfo dsi, string message, bool listening, int attemptNumber)
 		{

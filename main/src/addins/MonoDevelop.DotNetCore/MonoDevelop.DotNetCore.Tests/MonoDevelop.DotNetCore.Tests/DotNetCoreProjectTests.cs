@@ -25,6 +25,7 @@
 // THE SOFTWARE.
 
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Xml;
@@ -38,6 +39,17 @@ namespace MonoDevelop.DotNetCore.Tests
 	[TestFixture]
 	class DotNetCoreProjectExtensionTests : DotNetCoreTestBase
 	{
+		Solution solution;
+
+		[TearDown]
+		public override void TearDown ()
+		{
+			solution?.Dispose ();
+			solution = null;
+
+			base.TearDown ();
+		}
+
 		/// <summary>
 		/// ProjectGuid and DefaultTargets should not be added to .NET Core project when it is saved.
 		/// </summary>
@@ -45,7 +57,7 @@ namespace MonoDevelop.DotNetCore.Tests
 		public async Task ConsoleProject_SaveProject_DoesNotAddExtraProperties ()
 		{
 			string solutionFileName = Util.GetSampleProject ("dotnetcore-console", "dotnetcore-sdk-console.sln");
-			var solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
+			solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
 			var project = solution.GetAllProjects ().Single ();
 
 			// Original project does not have ProjectGuid nor DefaultTargets.
@@ -56,6 +68,7 @@ namespace MonoDevelop.DotNetCore.Tests
 			await project.SaveAsync (Util.GetMonitor ());
 
 			// Reload project.
+			solution.Dispose ();
 			solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
 			project = solution.GetAllProjects ().Single ();
 
@@ -70,7 +83,7 @@ namespace MonoDevelop.DotNetCore.Tests
 		public async Task SdkConsoleProject_AddPackageReference_VersionWrittenAsAttribute ()
 		{
 			string solutionFileName = Util.GetSampleProject ("dotnetcore-console", "dotnetcore-sdk-console.sln");
-			var solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
+			solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
 			var project = solution.GetAllProjects ().Single ();
 			string projectFileName = project.FileName;
 
@@ -100,7 +113,7 @@ namespace MonoDevelop.DotNetCore.Tests
 		public async Task GetReferences_ThreeProjectReferences_TransitivelyReferencedProjectsIncluded ()
 		{
 			string solutionFileName = Util.GetSampleProject ("TransitiveProjectReferences", "TransitiveProjectReferences.sln");
-			var solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
+			solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
 			var projectLibC = solution.FindProjectByName ("LibC") as DotNetProject;
 			var projectLibB = solution.FindProjectByName ("LibB") as DotNetProject;
 			var projectLibA = solution.FindProjectByName ("LibA") as DotNetProject;
@@ -137,7 +150,7 @@ namespace MonoDevelop.DotNetCore.Tests
 		public async Task GetReferences_ThreeProjectReferencesAndReferenceOutputAssemblyIsFalse_ReferenceOutputAssemblyIsFalseProjectsNotReturned ()
 		{
 			string solutionFileName = Util.GetSampleProject ("TransitiveProjectReferences", "TransitiveProjectReferences.sln");
-			var solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
+			solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
 			var projectLibC = solution.FindProjectByName ("LibC") as DotNetProject;
 			var projectLibB = solution.FindProjectByName ("LibB") as DotNetProject;
 			var projectLibA = solution.FindProjectByName ("LibA") as DotNetProject;
@@ -162,7 +175,7 @@ namespace MonoDevelop.DotNetCore.Tests
 		public async Task GetReferences_ThreeProjectReferencesJsonNet_JsonNetReferenceAvailableToReferencingProjects ()
 		{
 			string solutionFileName = Util.GetSampleProject ("TransitiveProjectReferences", "TransitiveProjectReferences.sln");
-			var solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
+			solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
 			var projectLibC = solution.FindProjectByName ("LibC") as DotNetProject;
 			var projectLibB = solution.FindProjectByName ("LibB") as DotNetProject;
 			var projectLibA = solution.FindProjectByName ("LibA") as DotNetProject;
@@ -174,7 +187,9 @@ namespace MonoDevelop.DotNetCore.Tests
 			projectLibA.Items.Add (packageReference);
 			await projectLibA.SaveAsync (Util.GetMonitor ());
 
-			var process = Process.Start ("msbuild", $"/t:Restore {solutionFileName}");
+			CreateNuGetConfigFile (solution.BaseDirectory);
+
+			var process = Process.Start ("msbuild", $"/t:Restore /p:RestoreDisableParallel=true \"{solutionFileName}\"");
 			Assert.IsTrue (process.WaitForExit (120000), "Timeout restoring NuGet packages.");
 			Assert.AreEqual (0, process.ExitCode);
 
@@ -199,7 +214,7 @@ namespace MonoDevelop.DotNetCore.Tests
 		public async Task CanReference_PortableClassLibrary_FromNetStandardOrNetCoreAppProject ()
 		{
 			string solutionFileName = Util.GetSampleProject ("dotnetcore-pcl", "dotnetcore-pcl.sln");
-			var solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
+			solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
 			var pclProject = solution.FindProjectByName ("PclProfile111") as DotNetProject;
 			var netStandardProject = solution.FindProjectByName ("NetStandard14") as DotNetProject;
 			var netCoreProject = solution.FindProjectByName ("NetCore11") as DotNetProject;
@@ -214,6 +229,144 @@ namespace MonoDevelop.DotNetCore.Tests
 			Assert.IsTrue (canReferenceFromNetCore);
 			Assert.IsFalse (canReferenceNetCoreFromNetStandard);
 			Assert.IsTrue (canReferenceNetStandardFromNetCore);
+		}
+
+		[Test]
+		public async Task TizenProject_OpenProject_LoadedAsDotNetProjectNotUnknownSolutionItem ()
+		{
+			string solutionFileName = Util.GetSampleProject ("TizenProject", "TizenProject.sln");
+			solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
+			var project = solution.Items.Single (item => item.Name == "TizenProject");
+
+			Assert.IsInstanceOf<DotNetProject> (project);
+		}
+
+		[Test]
+		public async Task ConsoleProject_UseDefaultMetadataForExcludedExpandedItems_IsTrue ()
+		{
+			string solutionFileName = Util.GetSampleProject ("dotnetcore-console", "dotnetcore-sdk-console.sln");
+			solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
+			var project = solution.GetAllProjects ().Single ();
+
+			Assert.IsTrue (project.UseDefaultMetadataForExcludedExpandedItems);
+			Assert.IsTrue (project.UseAdvancedGlobSupport);
+			Assert.IsTrue (project.UseFileWatcher);
+		}
+
+		/// <summary>
+		/// ASP.NET Core projects have different build actions for files in the wwwroot folder. This
+		/// tests that the correct build actions are used for different folders.
+		/// </summary>
+		[Test]
+		public async Task AspNetCoreProject_DefaultBuildActions ()
+		{
+			string projectFileName = Util.GetSampleProject ("aspnetcore", "aspnetcore.csproj");
+			using (var project = (DotNetProject) await Services.ProjectService.ReadSolutionItem (Util.GetMonitor (), projectFileName)) {
+
+				var fileName = project.BaseDirectory.Combine ("test.txt");
+				File.WriteAllText (fileName, string.Empty);
+				Assert.AreEqual ("None", project.GetDefaultBuildAction (fileName));
+
+				fileName = project.BaseDirectory.Combine ("MyClass.cs");
+				File.WriteAllText (fileName, string.Empty);
+				Assert.AreEqual ("Compile", project.GetDefaultBuildAction (fileName));
+
+				fileName = project.BaseDirectory.Combine ("MyPage.html");
+				File.WriteAllText (fileName, string.Empty);
+				Assert.AreEqual ("None", project.GetDefaultBuildAction (fileName));
+
+				fileName = project.BaseDirectory.Combine ("MyPage.cshtml");
+				File.WriteAllText (fileName, string.Empty);
+				Assert.AreEqual ("Content", project.GetDefaultBuildAction (fileName));
+
+				fileName = project.BaseDirectory.Combine ("settings.json");
+				File.WriteAllText (fileName, string.Empty);
+				Assert.AreEqual ("Content", project.GetDefaultBuildAction (fileName));
+
+				fileName = project.BaseDirectory.Combine ("test.config");
+				File.WriteAllText (fileName, string.Empty);
+				Assert.AreEqual ("Content", project.GetDefaultBuildAction (fileName));
+
+				fileName = project.BaseDirectory.Combine ("MyPage.resx");
+				File.WriteAllText (fileName, string.Empty);
+				Assert.AreEqual ("EmbeddedResource", project.GetDefaultBuildAction (fileName));
+
+				fileName = project.BaseDirectory.Combine ("wwwroot", "MyPage.html");
+				Directory.CreateDirectory (fileName.ParentDirectory);
+				File.WriteAllText (fileName, string.Empty);
+				Assert.AreEqual ("Content", project.GetDefaultBuildAction (fileName));
+			}
+		}
+
+		[Test]
+		public async Task DotNetCoreProject_DefaultBuildActions ()
+		{
+			string solutionFileName = Util.GetSampleProject ("dotnetcore-console", "dotnetcore-sdk-console.sln");
+			solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
+			var project = solution.GetAllProjects ().Single ();
+
+			var fileName = project.BaseDirectory.Combine ("test.txt");
+			File.WriteAllText (fileName, string.Empty);
+			Assert.AreEqual ("None", project.GetDefaultBuildAction (fileName));
+
+			fileName = project.BaseDirectory.Combine ("MyClass.cs");
+			File.WriteAllText (fileName, string.Empty);
+			Assert.AreEqual ("Compile", project.GetDefaultBuildAction (fileName));
+
+			fileName = project.BaseDirectory.Combine ("MyPage.html");
+			File.WriteAllText (fileName, string.Empty);
+			Assert.AreEqual ("None", project.GetDefaultBuildAction (fileName));
+
+			fileName = project.BaseDirectory.Combine ("MyPage.cshtml");
+			File.WriteAllText (fileName, string.Empty);
+			Assert.AreEqual ("None", project.GetDefaultBuildAction (fileName));
+
+			fileName = project.BaseDirectory.Combine ("settings.json");
+			File.WriteAllText (fileName, string.Empty);
+			Assert.AreEqual ("None", project.GetDefaultBuildAction (fileName));
+
+			fileName = project.BaseDirectory.Combine ("test.config");
+			File.WriteAllText (fileName, string.Empty);
+			Assert.AreEqual ("None", project.GetDefaultBuildAction (fileName));
+
+			fileName = project.BaseDirectory.Combine ("MyPage.resx");
+			File.WriteAllText (fileName, string.Empty);
+			Assert.AreEqual ("EmbeddedResource", project.GetDefaultBuildAction (fileName));
+
+			fileName = project.BaseDirectory.Combine ("wwwroot", "MyPage.html");
+			Directory.CreateDirectory (fileName.ParentDirectory);
+			File.WriteAllText (fileName, string.Empty);
+			Assert.AreEqual ("None", project.GetDefaultBuildAction (fileName));
+		}
+
+		[Test]
+		public async Task ConsoleProjectNoMainPropertyGroup_ChangeToLibraryAndSaveProject_OutputTypeSavedInProject ()
+		{
+			string solutionFileName = Util.GetSampleProject ("DotNetCoreNoMainPropertyGroup", "DotNetCoreNoMainPropertyGroup.sln");
+			solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
+			var project = solution.GetAllDotNetProjects ().Single ();
+
+			// Original project does not have OutputType.
+			var globalPropertyGroup = project.MSBuildProject.GetGlobalPropertyGroup ();
+			Assert.IsFalse (globalPropertyGroup.HasProperty ("OutputType"));
+			Assert.AreEqual (CompileTarget.Exe, project.CompileTarget);
+
+			string outputTypeEvaluatedValue = project.MSBuildProject.EvaluatedProperties.GetValue ("OutputType");
+			Assert.AreEqual ("Exe", outputTypeEvaluatedValue);
+
+			project.CompileTarget = CompileTarget.Library;
+			await project.SaveAsync (Util.GetMonitor ());
+
+			// Reload project.
+			solution.Dispose ();
+			solution = (Solution) await Services.ProjectService.ReadWorkspaceItem (Util.GetMonitor (), solutionFileName);
+			project = solution.GetAllDotNetProjects ().Single ();
+
+			globalPropertyGroup = project.MSBuildProject.GetGlobalPropertyGroup ();
+
+			string outputTypeProperty = globalPropertyGroup.GetValue ("OutputType");
+			Assert.AreEqual ("Library", outputTypeProperty);
+			Assert.AreEqual (CompileTarget.Library, project.CompileTarget);
 		}
 	}
 }

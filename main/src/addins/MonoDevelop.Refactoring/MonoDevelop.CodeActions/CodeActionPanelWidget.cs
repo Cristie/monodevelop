@@ -34,6 +34,9 @@ using MonoDevelop.Refactoring;
 using System.Collections.Generic;
 using GLib;
 using MonoDevelop.CodeIssues;
+using MonoDevelop.AnalysisCore;
+using Microsoft.CodeAnalysis.Diagnostics;
+using System.Threading.Tasks;
 
 namespace MonoDevelop.CodeActions
 {
@@ -62,11 +65,13 @@ namespace MonoDevelop.CodeActions
 		void GetAllProviderStates ()
 		{
 			var language = CodeRefactoringService.MimeTypeToLanguage (mimeType);
-			foreach (var node in BuiltInCodeDiagnosticProvider.GetBuiltInCodeRefactoringDescriptorsAsync (CodeRefactoringService.MimeTypeToLanguage(language), true).Result) {
+			var options = ((MonoDevelopWorkspaceDiagnosticAnalyzerProviderService)Ide.Composition.CompositionManager.GetExportedValue<IWorkspaceDiagnosticAnalyzerProviderService> ()).GetOptionsAsync ().Result;
+			foreach (var node in options.AllRefactorings.Where (x => x.Language.Contains (language))) {
 				providerStates [node] = node.IsEnabled;
 			}
 		}
 
+		CellRendererToggle togRender = new CellRendererToggle ();
 		public ContextActionPanelWidget (string mimeType)
 		{
 			this.mimeType = mimeType;
@@ -91,15 +96,7 @@ namespace MonoDevelop.CodeActions
 			searchentryFilter.Visible = true;
 			searchentryFilter.Entry.Changed += ApplyFilter;
 
-			var togRender = new CellRendererToggle ();
-			togRender.Toggled += delegate(object o, ToggledArgs args) {
-				TreeIter iter;
-				if (!treeStore.GetIterFromString (out iter, args.Path)) 
-					return;
-				var provider = (CodeRefactoringDescriptor)treeStore.GetValue (iter, 2);
-				providerStates [provider] = !providerStates [provider];
-				treeStore.SetValue (iter, 1, providerStates [provider]);
-			};
+			togRender.Toggled += OnActionToggled;
 			col.PackStart (togRender, false);
 			col.AddAttribute (togRender, "active", 1);
 			
@@ -119,6 +116,16 @@ namespace MonoDevelop.CodeActions
 			treeviewContextActions.HasTooltip = true;
 		}
 
+		void OnActionToggled (object sender, ToggledArgs args)
+		{
+			TreeIter iter;
+			if (!treeStore.GetIterFromString (out iter, args.Path))
+				return;
+			var provider = (CodeRefactoringDescriptor)treeStore.GetValue (iter, 2);
+			providerStates [provider] = !providerStates [provider];
+			treeStore.SetValue (iter, 1, providerStates [provider]);
+		}
+
 		void ApplyFilter (object sender, EventArgs e)
 		{
 			FillTreeStore (searchentryFilter.Entry.Text.Trim ());
@@ -128,7 +135,7 @@ namespace MonoDevelop.CodeActions
 		{
 			treeStore.Clear ();
 			var sortedAndFiltered = providerStates.Keys
-				.Where (node => string.IsNullOrEmpty (filter) || node.Name.IndexOf (filter, StringComparison.OrdinalIgnoreCase) > 0)
+				.Where (node => !string.IsNullOrEmpty(node.Name) && (string.IsNullOrEmpty (filter) || node.Name.IndexOf (filter, StringComparison.OrdinalIgnoreCase) > 0))
 				.OrderBy (n => n.Name, StringComparer.Ordinal);
 			foreach (var node in sortedAndFiltered) {
 				var title = node.Name;
@@ -142,6 +149,12 @@ namespace MonoDevelop.CodeActions
 			foreach (var kv in providerStates) {
 				kv.Key.IsEnabled = kv.Value;
 			}
+		}
+
+		protected override void OnDestroyed()
+		{
+			togRender.Toggled -= OnActionToggled;
+			base.OnDestroyed();
 		}
 	}
 }

@@ -47,13 +47,14 @@ using MonoDevelop.Ide.Extensions;
 using MonoDevelop.Components.MainToolbar;
 using MonoDevelop.Components.DockNotebook;
 using System.Threading.Tasks;
+using MonoDevelop.Ide.Gui.Components;
 
 namespace MonoDevelop.Ide.Gui
 {
 	/// <summary>
 	/// This is the a Workspace with a multiple document interface.
 	/// </summary>
-	internal class DefaultWorkbench : WorkbenchWindow, ICommandRouter
+	internal partial class DefaultWorkbench : WorkbenchWindow, ICommandRouter, IInfoBarHost
 	{
 		readonly static string mainMenuPath    = "/MonoDevelop/Ide/MainMenu";
 		readonly static string appMenuPath    = "/MonoDevelop/Ide/AppMenu";
@@ -79,11 +80,11 @@ namespace MonoDevelop.Ide.Gui
 
 		bool closeAll;
 
-		bool fullscreen;
 		Rectangle normalBounds = new Rectangle(0, 0, MinimumWidth, MinimumHeight);
 		
 		Gtk.Container rootWidget;
 		CommandFrame toolbarFrame;
+		Gtk.VBox infoBarFrame;
 		DockFrame dock;
 		SdiDragNotebook tabControl;
 		Gtk.MenuBar topMenu;
@@ -180,9 +181,6 @@ namespace MonoDevelop.Ide.Gui
 				dock.CurrentLayout = value;
 				
 				DestroyFullViewLayouts (oldLayout);
-				
-				// persist the selected layout
-				PropertyService.Set ("MonoDevelop.Core.Gui.CurrentWorkbenchLayout", value);
 			}
 		}
 		
@@ -221,6 +219,8 @@ namespace MonoDevelop.Ide.Gui
 
 			IdeApp.CommandService.SetRootWindow (this);
 			DockNotebook.NotebookChanged += NotebookPagesChanged;
+
+			Drag.DestSet (this, DestDefaults.All, targetEntryTypes, Gdk.DragAction.Copy);
 
 			Accessible.SetIsMainWindow (true);
 		}
@@ -284,6 +284,9 @@ namespace MonoDevelop.Ide.Gui
 			}
 			
 			AddinManager.ExtensionChanged += OnExtensionChanged;
+
+			// this is no longer used, clear any old values
+			PropertyService.Set ("MonoDevelop.Core.Gui.CurrentWorkbenchLayout", null);
 		}
 		
 		void OnExtensionChanged (object s, ExtensionEventArgs args)
@@ -308,24 +311,41 @@ namespace MonoDevelop.Ide.Gui
 				topMenu.Insert (item, 0);
 			}
 		}
-		
+
 		void InstallMenuBar ()
 		{
 			if (topMenu != null) {
 				((VBox)rootWidget).PackStart (topMenu, false, false, 0);
-				((Gtk.Box.BoxChild) rootWidget [topMenu]).Position = 0;
+				((Gtk.Box.BoxChild)rootWidget [topMenu]).Position = 0;
 				topMenu.ShowAll ();
 			}
 		}
-				
+
 		void UninstallMenuBar ()
 		{
 			if (topMenu == null)
 				return;
-			
+
 			rootWidget.Remove (topMenu);
 			topMenu.Destroy ();
 			topMenu = null;
+		}
+
+		public void AddInfoBar (string description, params InfoBarItem [] items)
+		{
+#if NATIVE_INFO_BAR
+			// disabled for now, needs a patch in gtk.
+			Xwt.Widget infoBar = null;
+			Xwt.Toolkit.NativeEngine.Invoke (() => {
+				infoBar = new XwtInfoBar (description, items);
+			});
+			var widget = Xwt.Toolkit.CurrentEngine.WrapWidget (infoBar);
+			var gtkWidget = widget.ToGtkWidget ();
+			infoBarFrame.Add (gtkWidget);
+#else
+			var infoBar = new XwtInfoBar (description, items);
+			infoBarFrame.Add (infoBar.ToGtkWidget ());
+#endif
 		}
 		
 		public void CloseContent (ViewContent content)
@@ -620,10 +640,9 @@ namespace MonoDevelop.Ide.Gui
 		
 		public ICustomXmlSerializer Memento {
 			get {
-				WorkbenchMemento memento   = new WorkbenchMemento (new Properties ());
-				int x, y, width, height;
-				GetPosition (out x, out y);
-				GetSize (out width, out height);
+				var memento  = new WorkbenchMemento (new Properties ());
+				GetPosition (out int x, out int y);
+				GetSize (out int width, out int height);
 				// HACK: always capture bounds on OS X because we don't restore Gdk.WindowState.Maximized due to
 				// the bug mentioned below. So we simular Maximized by capturing the Maximized size.
 				if (GdkWindow.State == 0 || Platform.IsMac) {
@@ -632,7 +651,7 @@ namespace MonoDevelop.Ide.Gui
 					memento.Bounds = normalBounds;
 				}
 				memento.WindowState = GdkWindow.State;
-				memento.FullScreen  = fullscreen;
+				memento.FullScreen  = FullScreen;
 				return memento.ToProperties ();
 			}
 			set {
@@ -891,6 +910,15 @@ namespace MonoDevelop.Ide.Gui
 			toolbar = DesktopService.CreateMainToolbar (this);
 			DesktopService.SetMainWindowDecorations (this);
 			DesktopService.AttachMainToolbar (fullViewVBox, toolbar);
+
+
+			infoBarFrame = new VBox (false, 0);
+			infoBarFrame.Accessible.Name = "MainWindow.InfoBars";
+			infoBarFrame.Accessible.SetLabel ("Label");
+			infoBarFrame.Accessible.SetShouldIgnore (true);
+
+			fullViewVBox.PackStart (infoBarFrame, false, false, 0);
+
 			toolbarFrame = new CommandFrame (IdeApp.CommandService);
 			toolbarFrame.Accessible.Name = "MainWindow.Root.ToolbarFrame";
 			toolbarFrame.Accessible.SetShouldIgnore (true);
@@ -1100,7 +1128,8 @@ namespace MonoDevelop.Ide.Gui
 		internal void ShowPopup (DockNotebook notebook, int tabIndex, Gdk.EventButton evt)
 		{
 			notebook.CurrentTabIndex = tabIndex;
-			IdeApp.CommandService.ShowContextMenu (notebook, evt, "/MonoDevelop/Ide/ContextMenu/DocumentTab");
+			var entrySet = IdeApp.CommandService.CreateCommandEntrySet ("/MonoDevelop/Ide/ContextMenu/DocumentTab");
+			IdeApp.CommandService.ShowContextMenu (notebook, evt, entrySet, notebook.CurrentTab.Content);
 		}
 		
 		internal void OnTabsReordered (DockNotebookTab widget, int oldPlacement, int newPlacement)
@@ -1507,6 +1536,57 @@ namespace MonoDevelop.Ide.Gui
 		object ICommandRouter.GetNextCommandTarget ()
 		{
 			return toolbar;
+		}
+
+		#endregion
+
+		#region DnD
+
+		enum TargetList
+		{
+			UriList = 100
+		}
+
+		static TargetEntry [] targetEntryTypes = { new TargetEntry ("text/uri-list", 0, (uint)TargetList.UriList) };
+
+
+		protected override bool OnDragMotion (Gdk.DragContext context, int x, int y, uint time_)
+		{
+			// Bring this window to the front. Otherwise, the drop may end being done in another window that overlaps this one
+			if (!Platform.IsWindows)
+				Present ();
+			return base.OnDragMotion (context, x, y, time_);
+		}
+
+		protected override void OnDragDataReceived (Gdk.DragContext context, int x, int y, SelectionData selection_data, uint info, uint time_)
+		{
+			if (info != (uint)TargetList.UriList)
+				return;
+			string fullData = System.Text.Encoding.UTF8.GetString (selection_data.Data);
+
+			var files = new List<FileOpenInformation> ();
+
+			foreach (string individualFile in fullData.Split ('\n')) {
+				string file = individualFile.Trim ();
+				if (!file.StartsWith ("file://", StringComparison.Ordinal))
+					continue;
+
+				var filePath = new FilePath (file);
+				if (filePath.IsDirectory)
+					filePath = Directory.EnumerateFiles (filePath).FirstOrDefault (p => Services.ProjectService.IsWorkspaceItemFile (p));
+				if (!filePath.IsNullOrEmpty)
+					files.Add (new FileOpenInformation (filePath, null, 0, 0, OpenDocumentOptions.DefaultInternal));
+			}
+
+			if (files.Count > 0) {
+				try {
+					IdeApp.OpenFiles (files);
+				} catch (Exception e) {
+					LoggingService.LogError ($"Failed to open dropped files", e);
+				}
+			}
+
+			base.OnDragDataReceived (context, x, y, selection_data, info, time_);
 		}
 
 		#endregion

@@ -52,10 +52,12 @@ namespace MonoDevelop.PackageManagement
 
 			packageManagementEvents.PackageInstalled += PackageInstalled;
 			packageManagementEvents.PackageUninstalled += PackageUninstalled;
+			packageManagementEvents.PackagesRestored += OnPackagesRestored;
 		}
 
 		public event EventHandler<PackageManagementPackageReferenceEventArgs> PackageReferenceAdded;
 		public event EventHandler<PackageManagementPackageReferenceEventArgs> PackageReferenceRemoved;
+		public event EventHandler PackagesRestored;
 
 		public void InstallPackages (
 			string packageSourceUrl,
@@ -105,8 +107,6 @@ namespace MonoDevelop.PackageManagement
 		/// <summary>
 		/// Installs NuGet packages into the selected project using the enabled package sources.
 		/// </summary>
-		/// <param name="project">Project.</param>
-		/// <param name="packages">Packages.</param>
 		public Task InstallPackagesAsync (Project project, IEnumerable<PackageManagementPackageReference> packages, bool licensesAccepted)
 		{
 			var repositoryProvider = SourceRepositoryProviderFactory.CreateSourceRepositoryProvider ();
@@ -302,6 +302,11 @@ namespace MonoDevelop.PackageManagement
 		void PackageInstalled (object sender, PackageManagementEventArgs e)
 		{
 			OnPackageReferenceAdded (e);
+		}
+
+		void OnPackagesRestored (object sender, EventArgs e)
+		{
+			PackagesRestored?.Invoke (sender, e);
 		}
 
 		void OnPackageReferencedRemoved (PackageManagementEventArgs e)

@@ -232,7 +232,8 @@ namespace MonoDevelop.Projects.MSBuild
 				string xml = File.ReadAllText (file);
 
 				LoadXml (xml, reader);
-
+			} catch (Exception ex) {
+				throw new MSBuildFileFormatException (ex.Message + " " + file, ex);
 			} finally {
 				EnableChangeTracking ();
 			}
@@ -432,6 +433,18 @@ namespace MonoDevelop.Projects.MSBuild
 			changeStamp++;
 		}
 
+		internal void NotifyImportChanged ()
+		{
+			NotifyChanged ();
+
+			ImportChanged?.Invoke (this, EventArgs.Empty);
+		}
+
+		/// <summary>
+		/// Occurs when an import has changed, is added or removed.
+		/// </summary>
+		internal event EventHandler ImportChanged;
+
 		/// <summary>
 		/// Gets or sets a value indicating whether this project uses the msbuild engine for evaluation.
 		/// </summary>
@@ -465,10 +478,10 @@ namespace MonoDevelop.Projects.MSBuild
 
 		object readLock = new object ();
 
-		internal MSBuildProjectInstanceInfo LoadNativeInstance ()
+		internal MSBuildProjectInstanceInfo LoadNativeInstance (bool evaluateItems)
 		{
 			lock (readLock) {
-				var supportsMSBuild = UseMSBuildEngine && GetGlobalPropertyGroup ().GetValue ("UseMSBuildEngine", true);
+				var supportsMSBuild = UseMSBuildEngine && (GetGlobalPropertyGroup ()?.GetValue ("UseMSBuildEngine", true) ?? true);
 
 				if (engineManager == null) {
 					engineManager = new MSBuildEngineManager ();
@@ -502,8 +515,10 @@ namespace MonoDevelop.Projects.MSBuild
 						};
 						var xml = SaveToString (ctx);
 
-						foreach (var it in GetAllItems ())
-							it.EvaluatedItemCount = 0;
+						if (evaluateItems) {
+							foreach (var it in GetAllItems ())
+								it.EvaluatedItemCount = 0;
+						}
 
 						nativeProjectInfo.Project = e.LoadProject (this, xml, FileName);
 					} catch (Exception ex) {
@@ -559,19 +574,25 @@ namespace MonoDevelop.Projects.MSBuild
 
 		public string [] ProjectTypeGuids
 		{
-			get { return GetGlobalPropertyGroup ().GetValue ("ProjectTypeGuids", "").Split (new [] { ';' }, StringSplitOptions.RemoveEmptyEntries).Select (t => t.Trim ()).ToArray (); }
-			set { GetGlobalPropertyGroup ().SetValue ("ProjectTypeGuids", string.Join (";", value), preserveExistingCase: true); }
+			get {
+				var propertyGroup = GetGlobalPropertyGroup ();
+				if (propertyGroup == null)
+					return Array.Empty<string> ();
+				return propertyGroup.GetValue ("ProjectTypeGuids", "").Split (new [] { ';' }, StringSplitOptions.RemoveEmptyEntries).Select (t => t.Trim ()).ToArray ();
+			}
+			set { GetOrCreateGlobalPropertyGroup ().SetValue ("ProjectTypeGuids", string.Join (";", value), preserveExistingCase: true); }
 		}
 
 		public bool AddProjectTypeGuid (string guid)
 		{
-			var guids = GetGlobalPropertyGroup ().GetValue ("ProjectTypeGuids", "").Trim ();
+			var propertyGroup = GetOrCreateGlobalPropertyGroup ();
+			var guids = propertyGroup.GetValue ("ProjectTypeGuids", "").Trim ();
 			if (guids.IndexOf (guid, StringComparison.OrdinalIgnoreCase) == -1) {
 				if (!string.IsNullOrEmpty (guids))
 					guids += ";" + guid;
 				else
 					guids = guid;
-				GetGlobalPropertyGroup ().SetValue ("ProjectTypeGuids", guids, preserveExistingCase: true);
+				propertyGroup.SetValue ("ProjectTypeGuids", guids, preserveExistingCase: true);
 				return true;
 			}
 			return false;
@@ -613,7 +634,7 @@ namespace MonoDevelop.Projects.MSBuild
 				ChildNodes = ChildNodes.Add (import);
 
 			import.ResetIndent (false);
-			NotifyChanged ();
+			NotifyImportChanged ();
 			return import;
 		}
 
@@ -629,7 +650,7 @@ namespace MonoDevelop.Projects.MSBuild
 			if (i != null) {
 				i.RemoveIndent ();
 				ChildNodes = ChildNodes.Remove (i);
-				NotifyChanged ();
+				NotifyImportChanged ();
 			}
 		}
 
@@ -642,7 +663,7 @@ namespace MonoDevelop.Projects.MSBuild
 			if (import.ParentObject == this) {
 				import.RemoveIndent ();
 				ChildNodes = ChildNodes.Remove (import);
-				NotifyChanged ();
+				NotifyImportChanged ();
 			} else
 				((MSBuildImportGroup)import.ParentObject).RemoveImport (import);
 		}
@@ -691,6 +712,17 @@ namespace MonoDevelop.Projects.MSBuild
 		public MSBuildPropertyGroup GetGlobalPropertyGroup ()
 		{
 			return PropertyGroups.FirstOrDefault (g => g.Condition.Length == 0);
+		}
+
+		internal MSBuildPropertyGroup GetOrCreateGlobalPropertyGroup ()
+		{
+			var group = GetGlobalPropertyGroup ();
+			if (group == null) {
+				group = AddNewPropertyGroup (false);
+				// Ensure empty property group is not added on saving if it has no child properties.
+				group.SkipSerializationOnNoChildren = true;
+			}
+			return group;
 		}
 
 		public MSBuildPropertyGroup CreatePropertyGroup ()
@@ -1152,7 +1184,7 @@ namespace MonoDevelop.Projects.MSBuild
 			if (elem == null)
 				return "";
 			var node = elem.PreviousSibling;
-			StringBuilder res = new StringBuilder ();
+			StringBuilder res = StringBuilderCache.Allocate ();
 
 			while (node != null) {
 				var ws = node as XmlWhitespace;
@@ -1163,13 +1195,13 @@ namespace MonoDevelop.Projects.MSBuild
 						res.Append (t);
 					} else {
 						res.Append (t, i + 1, t.Length - i - 1);
-						return res.ToString ();
+						return StringBuilderCache.ReturnAndFree (res);
 					}
 				} else
 					res.Clear ();
 				node = node.PreviousSibling;
 			}
-			return res.ToString ();
+			return StringBuilderCache.ReturnAndFree (res);
 		}
 
 		public static void Indent (TextFormatInfo format, XmlElement elem, bool closeInNewLine)

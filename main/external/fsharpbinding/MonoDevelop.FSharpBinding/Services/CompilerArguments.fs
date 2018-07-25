@@ -165,13 +165,6 @@ module CompilerArguments =
             | None -> FSharpEnvironment.getDefaultDirectories(langVersion, targetFramework)
         FSharpEnvironment.resolveAssembly dirs filename
 
-    let tryGetReferenceFromAssembly (assemblyRef:string) (refToFind:string) =
-        let assembly = Mono.Cecil.AssemblyDefinition.ReadAssembly(assemblyRef)
-        assembly.MainModule.AssemblyReferences
-        |> Seq.tryFind (fun name -> name.Name = refToFind)
-        |> Option.bind (fun assemblyNameRef -> let resolved = Mono.Cecil.DefaultAssemblyResolver().Resolve(assemblyNameRef)
-                                               Some (resolved.MainModule.FullyQualifiedName))
-
   let resolutionFailedMessage (n:string) = String.Format ("Resolution: Assembly resolution failed when trying to find default reference for: {0}", n)
   /// Generates references for the current project & configuration as a
   /// list of strings of the form [ "-r:<full-path>"; ... ]
@@ -242,7 +235,7 @@ module CompilerArguments =
         let getAbsolutePath (ref:AssemblyReference) =
             let assemblyPath = ref.FilePath
             if assemblyPath.IsAbsolute then
-                assemblyPath |> string
+                assemblyPath.FullPath |> string
             else
                 let s = Path.Combine(project.FileName.ParentDirectory.ToString(), assemblyPath.ToString())
                 Path.GetFullPath s
@@ -362,7 +355,8 @@ module CompilerArguments =
       LoadTime = loadedTimeStamp
       UnresolvedReferences = None
       OriginalLoadReferences = []
-      ExtraProjectInfo = None }
+      ExtraProjectInfo = None
+      ProjectId = None }
 
   /// Get source files of the current project (returns files that have
   /// build action set to 'Compile', but not e.g. scripts or resources)

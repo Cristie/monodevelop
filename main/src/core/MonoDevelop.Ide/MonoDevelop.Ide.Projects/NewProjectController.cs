@@ -59,8 +59,8 @@ namespace MonoDevelop.Ide.Projects
 		string configureYourWorkspaceBannerText = GettextCatalog.GetString ("Configure your new workspace");
 		string configureYourSolutionBannerText = GettextCatalog.GetString ("Configure your new solution");
 
-		const string UseGitPropertyName = "Dialogs.NewProjectDialog.UseGit";
-		const string CreateGitIgnoreFilePropertyName = "Dialogs.NewProjectDialog.CreateGitIgnoreFile";
+		internal const string UseGitPropertyName = "Dialogs.NewProjectDialog.UseGit";
+		internal const string CreateGitIgnoreFilePropertyName = "Dialogs.NewProjectDialog.CreateGitIgnoreFile";
 		internal const string CreateProjectSubDirectoryPropertyName = "MonoDevelop.Core.Gui.Dialogs.NewProjectDialog.AutoCreateProjectSubdir";
 		const string NewSolutionLastSelectedCategoryPropertyName = "Dialogs.NewProjectDialog.LastSelectedCategoryPath";
 		const string NewSolutionLastSelectedTemplatePropertyName = "Dialogs.NewProjectDialog.LastSelectedTemplate";
@@ -204,7 +204,7 @@ namespace MonoDevelop.Ide.Projects
 		void UpdateDefaultSettings ()
 		{
 			UpdateDefaultGitSettings ();
-			if (IsNewSolution)
+			if (IsNewSolution && finalConfigurationPage.IsCreateProjectDirectoryInsideSolutionDirectoryEnabled)
 				PropertyService.Set (CreateProjectSubDirectoryPropertyName, projectConfiguration.CreateProjectDirectoryInsideSolutionDirectory);
 			PropertyService.Set (SelectedLanguagePropertyName, GetLanguageForTemplateProcessing ());
 			DefaultSelectedCategoryPath = GetSelectedCategoryPath ();
@@ -270,7 +270,9 @@ namespace MonoDevelop.Ide.Projects
 		void UpdateDefaultGitSettings ()
 		{
 			PropertyService.Set (UseGitPropertyName, projectConfiguration.UseGit);
-			PropertyService.Set (CreateGitIgnoreFilePropertyName, projectConfiguration.CreateGitIgnoreFile);
+
+			if (finalConfigurationPage.IsGitIgnoreEnabled)
+				PropertyService.Set (CreateGitIgnoreFilePropertyName, projectConfiguration.CreateGitIgnoreFile);
 		}
 
 		protected virtual INewProjectDialogBackend CreateNewProjectDialog ()
@@ -776,6 +778,7 @@ namespace MonoDevelop.Ide.Projects
 
 			try {
 				result = await TemplatingService.ProcessTemplate (template, projectConfiguration, ParentFolder);
+				SetFirstBuildProperty (result.WorkspaceItems);
 				if (!result.WorkspaceItems.Any ())
 					return false;
 			} catch (UserException ex) {
@@ -804,6 +807,30 @@ namespace MonoDevelop.Ide.Projects
 			if (processedTemplate != null) {
 				foreach (IDisposable item in processedTemplate.WorkspaceItems) {
 					item.Dispose ();
+				}
+			}
+		}
+
+		/// <summary>
+		/// Sets the FirstBuild user property to true for a new project. This will
+		/// be removed when the first build of the project is run.
+		/// </summary>
+		static void SetFirstBuildProperty (IEnumerable<IWorkspaceFileObject> items)
+		{
+			foreach (var project in GetProjects (items)) {
+				project.UserProperties.SetValue ("FirstBuild", true);
+			}
+		}
+
+		static IEnumerable<Project> GetProjects (IEnumerable<IWorkspaceFileObject> items)
+		{
+			foreach (var item in items) {
+				if (item is Solution solution) {
+					foreach (var project in solution.GetAllProjects ()) {
+						yield return project;
+					}
+				} else if (item is Project project) {
+					yield return project;
 				}
 			}
 		}

@@ -44,6 +44,7 @@ using MonoDevelop.Ide.Gui.Components;
 using MonoDevelop.Core.Assemblies;
 using MonoDevelop.Core;
 using MonoDevelop.PackageManagement;
+using System.Text;
 
 namespace MonoDevelop.UnitTesting.NUnit
 {
@@ -78,6 +79,9 @@ namespace MonoDevelop.UnitTesting.NUnit
 
 		public static NUnitProjectTestSuite CreateTest (DotNetProject project)
 		{
+			if (project.TargetFramework.Id.Identifier == ".NETCoreApp")
+				return null;
+
 			if (!project.ParentSolution.GetConfiguration (IdeApp.Workspace.ActiveConfiguration).BuildEnabledForItem (project))
 				return null;
 
@@ -134,7 +138,7 @@ namespace MonoDevelop.UnitTesting.NUnit
 		{
 			if (p.Include.IndexOf ("GuiUnit", StringComparison.OrdinalIgnoreCase) != -1)
 				return NUnitVersion.NUnit2;
-			if (p.Include.IndexOf ("nunit.framework", StringComparison.OrdinalIgnoreCase) != -1)
+			if (p.Include.IndexOf ("nunit", StringComparison.OrdinalIgnoreCase) != -1)
 				return p.IsAtLeastVersion (new Version (3, 0)) ? NUnitVersion.NUnit3 : NUnitVersion.NUnit2;
 			return null;
 		}
@@ -204,20 +208,54 @@ namespace MonoDevelop.UnitTesting.NUnit
 		protected override string TestInfoCachePath {
 			get { return Path.Combine (resultsPath, storeId + ".test-cache"); }
 		}
-		
-		protected override IEnumerable<string> SupportAssemblies {
-			get {
+
+		protected override async Task<IEnumerable<string>> GetSupportAssembliesAsync ()
+		{
+			if (project != null) {
+				var references = await project.GetReferences (IdeApp.Workspace.ActiveConfiguration).ConfigureAwait (false);
 				// Referenced assemblies which are not in the gac and which are not localy copied have to be preloaded
-				DotNetProject project = base.OwnerSolutionItem as DotNetProject;
-				if (project != null) {
-					foreach (var pr in project.References) {
-						if (pr.ReferenceType != ReferenceType.Package && !pr.LocalCopy && pr.ReferenceOutputAssembly) {
-							foreach (string file in pr.GetReferencedFileNames (IdeApp.Workspace.ActiveConfiguration))
-								yield return file;
+				var supportAssemblies = new HashSet<string> ();
+				foreach (var r in references) {
+					if (IsSupportAssembly (r)) {
+						string path = r.FilePath.FullPath;
+						if (File.Exists (path)) {
+							supportAssemblies.Add (path);
 						}
 					}
 				}
+
+				return supportAssemblies;
 			}
+
+			return Enumerable.Empty<string> ();
+		}
+
+		static bool IsSupportAssembly (AssemblyReference r)
+		{
+			// already local copied, no need to preload
+			if (r.IsCopyLocal) {
+				return false;
+			}
+
+			// non-referenced project dependency
+			if (r.IsProjectReference && !r.ReferenceOutputAssembly) {
+				return false;
+			}
+
+			// don't need to explicitly load framework files
+			if (r.IsFrameworkFile || r.IsImplicit || r.IsFacade || IsGacReference ()) {
+				return false;
+			}
+
+			// reference assemblies from NuGet are not usable
+			var parent = r.FilePath.FullPath.ParentDirectory;
+			if (parent.FileName == "ref" || parent.ParentDirectory.FileName == "ref") {
+				return false;
+			}
+
+			return true;
+
+			bool IsGacReference () => string.Equals (r.Metadata.GetValue ("ResolvedFrom"), "{GAC}", StringComparison.OrdinalIgnoreCase);
 		}
 	}
 }

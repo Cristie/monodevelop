@@ -53,6 +53,8 @@ namespace MonoDevelop.PackageManagement
 
 			string path = SettingsUtility.GetGlobalPackagesFolder (settings);
 			packagePathResolver = new VersionFolderPathResolver (path);
+
+			ProjectServices = new NuGetProjectServices (dotNetProject);
 		}
 
 		public Task SaveProject ()
@@ -69,8 +71,6 @@ namespace MonoDevelop.PackageManagement
 			Runtime.RunInMainThread (() => {
 				dotNetProject.DotNetProject.NotifyModified ("References");
 			});
-
-			packageManagementEvents.OnFileChanged (JsonConfigPath);
 
 			return base.PostProcessAsync (nuGetProjectContext, token);
 		}

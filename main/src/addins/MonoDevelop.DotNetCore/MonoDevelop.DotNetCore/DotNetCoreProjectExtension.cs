@@ -63,18 +63,11 @@ namespace MonoDevelop.DotNetCore
 			return base.SupportsObject (item) && IsSdkProject ((DotNetProject)item);
 		}
 
-		protected override void Initialize ()
-		{
-			RequiresMicrosoftBuild = true;
-			base.Initialize ();
-		}
-
 		protected override bool OnGetSupportsFramework (TargetFramework framework)
 		{
-			if (framework.IsNetCoreApp () ||
-				framework.IsNetStandard ())
-				return true;
-			return base.OnGetSupportsFramework (framework);
+			// Allow all SDK style projects to be loaded even if the framework is unknown.
+			// A PackageReference may define the target framework with an imported MSBuild file.
+			return true;
 		}
 
 		/// <summary>
@@ -125,12 +118,14 @@ namespace MonoDevelop.DotNetCore
 
 			base.OnReadProject (monitor, msproject);
 
-			dotNetCoreMSBuildProject.ReadProject (msproject);
+			dotNetCoreMSBuildProject.ReadProject (msproject, Project.TargetFramework.Id);
 
 			if (!dotNetCoreMSBuildProject.IsOutputTypeDefined)
 				Project.CompileTarget = dotNetCoreMSBuildProject.DefaultCompileTarget;
 
 			Project.UseAdvancedGlobSupport = true;
+			Project.UseDefaultMetadataForExcludedExpandedItems = true;
+			Project.UseFileWatcher = true;
 		}
 
 		protected override void OnWriteProject (ProgressMonitor monitor, MSBuildProject msproject)
@@ -232,6 +227,7 @@ namespace MonoDevelop.DotNetCore
 
 				using (var dialog = new DotNetCoreNotInstalledDialog ()) {
 					dialog.IsUnsupportedVersion = unsupportedSdkVersion;
+					dialog.RequiresDotNetCore21 = Project.TargetFramework.IsNetCoreApp21 ();
 					dialog.RequiresDotNetCore20 = Project.TargetFramework.IsNetStandard20OrNetCore20 ();
 					dialog.Show ();
 				}
@@ -300,6 +296,8 @@ namespace MonoDevelop.DotNetCore
 			if (!IdeApp.IsInitialized)
 				return;
 
+			PackageManagementServices.ProjectTargetFrameworkMonitor.ProjectTargetFrameworkChanged += ProjectTargetFrameworkChanged;
+
 			if (HasSdk && !IsDotNetCoreSdkInstalled ()) {
 				ShowDotNetCoreNotInstalledDialog (sdkPaths.IsUnsupportedSdkVersion);
 			}
@@ -308,7 +306,27 @@ namespace MonoDevelop.DotNetCore
 		public override void Dispose ()
 		{
 			Project.Modified -= OnProjectModified;
+
+			if (IdeApp.IsInitialized)
+				PackageManagementServices.ProjectTargetFrameworkMonitor.ProjectTargetFrameworkChanged -= ProjectTargetFrameworkChanged;
+
 			base.Dispose ();
+		}
+
+		/// <summary>
+		/// This event is fired after the project is saved. Runs a restore if the project was
+		/// not reloaded.
+		/// </summary>
+		void ProjectTargetFrameworkChanged (object sender, ProjectTargetFrameworkChangedEventArgs e)
+		{
+			if (e.IsReload) {
+				// Ignore. A restore will occur on reload elsewhere.
+				return;
+			}
+
+			// Need to re-evaluate before restoring to ensure the implicit package references are correct after
+			// the target framework has changed.
+			RestorePackagesInProjectHandler.Run (Project, restoreTransitiveProjectReferences: true, reevaluateBeforeRestore: true);
 		}
 
 		protected override Task<BuildResult> OnClean (ProgressMonitor monitor, ConfigurationSelector configuration, OperationContext operationContext)
@@ -334,7 +352,7 @@ namespace MonoDevelop.DotNetCore
 			if (ProjectNeedsRestore ()) {
 				return CreateNuGetRestoreRequiredBuildResult ();
 			} else if (HasSdk && !IsDotNetCoreSdkInstalled ()) {
-				return CreateDotNetCoreSdkRequiredBuildResult (sdkPaths.IsUnsupportedSdkVersion);
+				return CreateDotNetCoreSdkRequiredBuildResult ();
 			}
 			return null;
 		}
@@ -362,25 +380,26 @@ namespace MonoDevelop.DotNetCore
 			return result;
 		}
 
-		BuildResult CreateDotNetCoreSdkRequiredBuildResult (bool isUnsupportedVersion)
+		BuildResult CreateDotNetCoreSdkRequiredBuildResult ()
 		{
-			bool requiresDotNetCoreSdk20 = Project.TargetFramework.IsNetStandard20OrNetCore20 ();
-			return CreateBuildError (GetDotNetCoreSdkRequiredBuildErrorMessage (isUnsupportedVersion, requiresDotNetCoreSdk20));
+			return CreateBuildError (GetDotNetCoreSdkRequiredMessage ());
 		}
 
 		internal string GetDotNetCoreSdkRequiredMessage ()
 		{
 			return GetDotNetCoreSdkRequiredBuildErrorMessage (
 				IsUnsupportedDotNetCoreSdkInstalled (),
-				Project.TargetFramework.IsNetStandard20OrNetCore20 ());
+				Project.TargetFramework);
 		}
 
-		static string GetDotNetCoreSdkRequiredBuildErrorMessage (bool isUnsupportedVersion, bool requiresDotNetCoreSdk20)
+		static string GetDotNetCoreSdkRequiredBuildErrorMessage (bool isUnsupportedVersion, TargetFramework targetFramework)
 		{
 			if (isUnsupportedVersion)
 				return GettextCatalog.GetString ("The .NET Core SDK installed is not supported. Please install a more recent version. {0}", DotNetCoreNotInstalledDialog.DotNetCoreDownloadUrl);
-			else if (requiresDotNetCoreSdk20)
+			else if (targetFramework.IsNetStandard20OrNetCore20 ())
 				return GettextCatalog.GetString (".NET Core 2.0 SDK is not installed. This is required to build .NET Core 2.0 projects. {0}", DotNetCoreNotInstalledDialog.DotNetCore20DownloadUrl);
+			else if (targetFramework.IsNetCoreApp21 ())
+				return GettextCatalog.GetString (".NET Core 2.1 SDK is not installed. This is required to build .NET Core 2.1 projects. {0}", DotNetCoreNotInstalledDialog.DotNetCore21DownloadUrl);
 
 			return GettextCatalog.GetString (".NET Core SDK is not installed. This is required to build .NET Core projects. {0}", DotNetCoreNotInstalledDialog.DotNetCoreDownloadUrl);
 		}
@@ -518,47 +537,14 @@ namespace MonoDevelop.DotNetCore
 			if (Project.Loading)
 				return;
 
+			if (IdeApp.ProjectOperations == null)
+				return;
+
 			if (IdeApp.ProjectOperations.CurrentSelectedSolution != Project.ParentSolution)
 				return;
 
 			if (ProjectNeedsRestore ())
 				RestorePackagesInProjectHandler.Run (Project);
-		}
-
-		internal bool RestoreAfterSave { get; set; }
-
-		protected override Task OnSave (ProgressMonitor monitor)
-		{
-			if (RestoreAfterSave) {
-				RestoreAfterSave = false;
-				if (!PackageManagementServices.BackgroundPackageActionRunner.IsRunning) {
-					return OnRestoreAfterSave (monitor);
-				}
-			}
-			return base.OnSave (monitor);
-		}
-
-		/// <summary>
-		/// This is currently only called after the target framework of the project
-		/// is modified. The project is saved, then re-evaluated and finally the NuGet
-		/// packages are restored. The project re-evaluation is done so any target
-		/// framework changes are available in the MSBuildProject's EvaluatedProperties
-		/// otherwise the restore uses the wrong target framework.
-		/// Also using a GLib.Timeout since triggering the reload straight away can
-		/// cause the Save to fail with an index out of range exception when
-		/// MSBuildPropertyGroup.Add is called when the DotNetProjectConfiguration
-		/// is written.
-		/// </summary>
-		async Task OnRestoreAfterSave (ProgressMonitor monitor)
-		{
-			await base.OnSave (monitor);
-			await Runtime.RunInMainThread (() => {
-				GLib.Timeout.Add (0, () => {
-					Project.NeedsReload = true;
-					FileService.NotifyFileChanged (Project.FileName);
-					return false;
-				});
-			});
 		}
 
 		protected override bool OnGetSupportsImportedItem (IMSBuildItemEvaluated buildItem)
@@ -691,6 +677,21 @@ namespace MonoDevelop.DotNetCore
 				if (extension != null)
 					await extension.GetTransitiveAssemblyReferences (traversedProjects, references, configuration, false, token);
 			}
+		}
+
+		/// <summary>
+		/// ASP.NET Core projects have different build actions if the file is in the wwwroot folder.
+		/// It also uses Content build actions for *.json, *.config and *.cshtml files. To support
+		/// this the default file globs for the file are found and the MSBuild item name is returned.
+		/// </summary>
+		protected override string OnGetDefaultBuildAction (string fileName)
+		{
+			string include = MSBuildProjectService.ToMSBuildPath (Project.ItemDirectory, fileName);
+			var globItems = Project.MSBuildProject.FindGlobItemsIncludingFile (include).ToList ();
+			if (globItems.Count == 1)
+				return globItems [0].Name;
+
+			return base.OnGetDefaultBuildAction (fileName);
 		}
 	}
 }

@@ -157,6 +157,10 @@ namespace MonoDevelop.Components.AtkCocoaHelper
 		public static void MakeAccessibilityAnnouncement (this Atk.Object o,  string message)
 		{
 		}
+
+		public static void TransferAccessibleChild (this Atk.Object from, Atk.Object to, Atk.Object child)
+		{
+		}
 	}
 
 	public class AccessibilityElementProxy : IAccessibilityElementProxy
@@ -175,6 +179,12 @@ namespace MonoDevelop.Components.AtkCocoaHelper
 			return new AccessibilityElementProxy ();
 		}
 
+		public static bool Enabled {
+			get {
+				return false;
+			}
+		}
+		
 		public string Identifier {
 			get {
 				return null;
@@ -239,6 +249,10 @@ namespace MonoDevelop.Components.AtkCocoaHelper
 		{
 		}
 
+		public void RemoveAccessibleChild (IAccessibilityElementProxy child)
+		{
+		}
+
 		public void SetRole (string role, string description = null)
 		{
 		}
@@ -247,6 +261,7 @@ namespace MonoDevelop.Components.AtkCocoaHelper
 		{
 		}
 
+		#pragma warning disable 67 // never used
 		public event EventHandler PerformCancel;
 		public event EventHandler PerformConfirm;
 		public event EventHandler PerformDecrement;
@@ -258,6 +273,7 @@ namespace MonoDevelop.Components.AtkCocoaHelper
 		public event EventHandler PerformShowAlternateUI;
 		public event EventHandler PerformShowDefaultUI;
 		public event EventHandler PerformShowMenu;
+		#pragma warning restore 67
 
 		// For Navigable Text elements
 		public Func<string> Contents {

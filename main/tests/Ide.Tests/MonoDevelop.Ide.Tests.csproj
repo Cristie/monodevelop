@@ -1,38 +1,18 @@
-<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="..\..\MonoDevelop.props" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProductVersion>8.0.30703</ProductVersion>
-    <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>{73D4CC8B-BAB9-4A29-841B-F25C6311F067}</ProjectGuid>
-    <OutputType>Library</OutputType>
     <RootNamespace>Ide.Tests</RootNamespace>
-    <AssemblyName>MonoDevelop.Ide.Tests</AssemblyName>
     <TestRunnerCommand>..\..\build\bin\mdtool.exe</TestRunnerCommand>
     <TestRunnerArgs>run-md-tests</TestRunnerArgs>
-    <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
+    <TargetFrameworkVersion>$(MDFrameworkVersion)</TargetFrameworkVersion>
     <OutputPath>..\..\build\tests</OutputPath>
-    <DefineConstants>DEBUG;</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <ConsolePause>false</ConsolePause>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>..\..\build\tests</OutputPath>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-    <ConsolePause>false</ConsolePause>
-    <DebugSymbols>true</DebugSymbols>
-  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' " />
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' " />
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="gtk-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f" />
@@ -41,6 +21,39 @@
     <Reference Include="glib-sharp, Version=2.12.0.0, Culture=neutral, PublicKeyToken=35e10195dab3c99f" />
     <Reference Include="Microsoft.CodeAnalysis">
       <HintPath>..\..\build\bin\Microsoft.CodeAnalysis.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="System.ValueTuple">
+      <HintPath>..\..\packages\System.ValueTuple.4.4.0\lib\netstandard1.0\System.ValueTuple.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.Workspaces">
+      <HintPath>..\..\build\bin\Microsoft.CodeAnalysis.Workspaces.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.Workspaces.Desktop">
+      <HintPath>..\..\build\bin\Microsoft.CodeAnalysis.Workspaces.Desktop.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Microsoft.VisualStudio.Composition">
+      <HintPath>..\..\build\bin\Microsoft.VisualStudio.Composition.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.Features">
+      <HintPath>..\..\build\bin\Microsoft.CodeAnalysis.Features.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.CSharp">
+      <HintPath>..\..\build\bin\Microsoft.CodeAnalysis.CSharp.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Collections.Immutable">
+      <HintPath>..\..\build\bin\System.Collections.Immutable.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.EditorFeatures">
+      <HintPath>..\..\build\bin\Microsoft.CodeAnalysis.EditorFeatures.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="System.Xml.Linq" />
+    <Reference Include="Microsoft.VisualStudio.CodingConventions">
+      <HintPath>..\..\build\bin\Microsoft.VisualStudio.CodingConventions.dll</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>
@@ -93,18 +106,33 @@
     <Compile Include="MonoDevelop.SourceEditor\DebugTooltipTests.cs" />
     <Compile Include="MonoDevelop.SourceEditor\JSonIndentEngineTests.cs" />
     <Compile Include="MonoDevelop.SourceEditor\SourceEditorTests.cs" />
-    <Compile Include="IdeTestBase.cs" />
     <Compile Include="MonoDevelop.Ide\UserPreferencesTests.cs" />
     <Compile Include="MonoDevelop.Ide.Projects\ResourcesTests.cs" />
-    <Compile Include="MonoDevelop.Ide.Gui\TestViewContent.cs" />
-    <Compile Include="MonoDevelop.Ide.Gui\TestWorkbenchWindow.cs" />
-    <Compile Include="MonoDevelop.Ide.Gui\TestDocument.cs" />
-    <Compile Include="TypeSystemServiceTestExtensions.cs" />
     <Compile Include="MonoDevelop.Ide.Editor\SkipCharSessionTests.cs" />
     <Compile Include="MonoDevelop.Components\PangoUtilTests.cs" />
     <Compile Include="MonoDevelop.Ide.Projects\DotNetCoreProjectTests.cs" />
+    <Compile Include="MonoDevelop.Ide\BuildOutputTests.cs" />
+    <Compile Include="MonoDevelop.Ide.Gui\MockCompletionView.cs" />
+    <Compile Include="MonoDevelop.Ide\MonoDocDocumentationProviderTests.cs" />
+    <Compile Include="MonoDevelop.Ide.Editor\EditorConfigTests.cs" />
+    <Compile Include="MonoDevelop.Ide.Projects\PclToProjectJsonConversionTests.cs" />
+    <Compile Include="MonoDevelop.Ide.Tasks\CommentTasksProviderTests.cs" />
+    <Compile Include="MonoDevelop.Ide.Tasks\CommentTasksProviderTests.Controller.cs" />
+    <Compile Include="MonoDevelop.Ide.Composition\CompositionManager.CachingTests.cs" />
+    <Compile Include="MonoDevelop.Ide.RoslynServices\MonoDevelopProjectCacheHostServiceTests.cs" />
+    <Compile Include="MonoDevelop.Ide\RoslynSearchCategoryTests.cs" />
+    <Compile Include="MonoDevelop.Ide.Editor\CodeSnippetTests.cs" />
+    <Compile Include="MonoDevelop.Ide.RoslynServices\RoslynServiceTests.cs" />
+    <Compile Include="MonoDevelop.Ide.RoslynServices.Options\OptionsExtensionsTests.cs" />
+    <Compile Include="MonoDevelop.Ide.RoslynServices.Options\RoslynPreferencesTests.cs" />
+    <Compile Include="MonoDevelop.Ide.RoslynServices.Options\OptionsTestBase.cs" />
+    <Compile Include="MonoDevelop.Ide.RoslynServices.Options\MockOptionService.cs" />
+    <Compile Include="MonoDevelop.Ide.RoslynServices.Options\MonoDevelopOptionPersisterTests.cs" />
+    <Compile Include="TypeForwarders.cs" />
+    <Compile Include="MonoDevelop.Ide.RoslynServices\ExportedServicesAndWorkspaceServicesTests.cs" />
+    <Compile Include="MonoDevelop.Ide.Editor\DocumentReloadTests.cs" />
+    <Compile Include="MonoDevelop.Ide.RoslynServices.Options\FullSolutionAnalysisTests.cs" />
   </ItemGroup>
-  <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
   <ItemGroup>
     <ProjectReference Include="..\..\src\core\MonoDevelop.Ide\MonoDevelop.Ide.csproj">
       <Project>{27096E7F-C91C-4AC6-B289-6897A701DF21}</Project>
@@ -159,15 +187,10 @@
       <Name>MonoDevelop.SourceEditor</Name>
       <Private>False</Private>
     </ProjectReference>
+    <ProjectReference Include="..\IdeUnitTests\IdeUnitTests.csproj">
+      <Project>{F7B2B155-7CF4-42C4-B5AF-63C0667D2E4F}</Project>
+      <Name>IdeUnitTests</Name>
+    </ProjectReference>
   </ItemGroup>
-  <ItemGroup>
-    <Folder Include="MonoDevelop.Ide\" />
-    <Folder Include="MonoDevelop.Ide.Editor\" />
-    <Folder Include="MonoDevelop.Ide.FindInFiles\" />
-    <Folder Include="MonoDevelop.Ide.Gui\" />
-    <Folder Include="MonoDevelop.Ide.Templates\" />
-    <Folder Include="MonoDevelop.Components.PropertyGrid\" />
-    <Folder Include="MonoDevelop.SourceEditor\" />
-    <Folder Include="MonoDevelop.Components\" />
-  </ItemGroup>
+  <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
 </Project>

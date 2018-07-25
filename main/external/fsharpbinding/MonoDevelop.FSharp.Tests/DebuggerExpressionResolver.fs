@@ -12,12 +12,18 @@ type DebuggerExpressionResolver() =
       """
 type TestOne() =
   member val PropertyOne = "42" with get, set
+  member x.PropertyTwo = "42"
   member x.FunctionOne(parameter) = ()
 
 let local|One = TestOne()
 let local|Two = localOne.Prope|rtyOne
 let localThree = local|One.PropertyOne
-let localFour = localOne.Property|One"""
+let localFour = localOne.Property|One
+let localFive = System.Convert.ToInt32(localOne.Property|Two)
+
+type Test = { recordfield: string }
+let a = { recordfield = "A" }
+let x = a.record|field"""
 
     let getOffset expr =
         let startOffset = content.IndexOf (expr, StringComparison.Ordinal)
@@ -40,14 +46,16 @@ let localFour = localOne.Property|One"""
     [<TestCase("localOne.Prope|rtyOne", "localOne.PropertyOne")>]
     [<TestCase("local|One.PropertyOne", "localOne")>]
     [<TestCase("localOne.Property|One", "localOne.PropertyOne")>]
+    [<TestCase("localOne.Property|Two", "localOne.PropertyTwo")>]
+    [<TestCase("a.record|field", "a.recordfield")>]
     member x.TestBasicLocalVariable(localVariable, expected) =
         let basicOffset = getOffset (localVariable)
         let doc = TestHelpers.createDoc (content.Replace("|" ,"")) ""
 
         let loc = doc.Editor.OffsetToLocation basicOffset
         let lineTxt = doc.Editor.GetLineText(loc.Line, false)
-        let markedLine = (String.replicate loc.Column " " + "^" )
-        System.Console.WriteLine(sprintf "%s\n%s" lineTxt markedLine)
+        let markedLine = (String.replicate (loc.Column-1) " " + "^" )
+        printfn "%s\n%s" lineTxt markedLine
 
         let debugDataTipInfo = resolveExpression (doc, content, basicOffset)
         debugDataTipInfo.Text |> should equal expected

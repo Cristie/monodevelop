@@ -129,8 +129,13 @@ namespace MonoDevelop.Components
 			return false;
 		}
 
+		internal bool IgnoreRepositionWindow { get; set; }
 		public override void RepositionWindow (Rectangle? newTargetRect = default (Rectangle?))
 		{
+			if (IgnoreRepositionWindow) {
+				return;
+			}
+
 			if (!HasParent)
 				return;
 
@@ -174,7 +179,7 @@ namespace MonoDevelop.Components
 						intPos = (intPos & 0xf0) | (int)PopupPosition.Bottom;
 					break;
 				case PopupPosition.Bottom:
-					if (currentRect.Top - request.Height < geometry.X)
+					if (currentRect.Top - request.Height < geometry.Y)
 						intPos = (intPos & 0xf0) | (int)PopupPosition.Top;
 					break;
 				case PopupPosition.Right:

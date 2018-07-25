@@ -55,9 +55,6 @@ namespace MonoDevelop.Core
 
 		static FileServiceErrorHandler errorHandler;
 
-		static FileSystemExtension fileSystemChain;
-		static readonly FileSystemExtension defaultExtension = new DefaultFileSystemExtension ();
-
 		static readonly EventQueue eventQueue = new EventQueue ();
 
 		static readonly string applicationRootPath = Path.Combine (PropertyService.EntryAssemblyPath, "..");
@@ -67,32 +64,40 @@ namespace MonoDevelop.Core
 			}
 		}
 
-		static FileService()
+		static class FileSystemExtensions
 		{
-			AddinManager.ExtensionChanged += delegate (object sender, ExtensionEventArgs args) {
-				if (args.PathChanged (addinFileSystemExtensionPath))
-					UpdateExtensions ();
-			};
-			UpdateExtensions ();
-		}
+			public static FileSystemExtension Chain => fileSystemChain;
 
-		static void UpdateExtensions ()
-		{
-			if (!Runtime.Initialized) {
-				fileSystemChain = defaultExtension;
-				return;
+			static FileSystemExtension fileSystemChain;
+			static readonly FileSystemExtension defaultExtension = new DefaultFileSystemExtension ();
+
+			static FileSystemExtensions ()
+			{
+				AddinManager.ExtensionChanged += delegate (object sender, ExtensionEventArgs args) {
+					if (args.PathChanged (addinFileSystemExtensionPath))
+						UpdateExtensions ();
+				};
+				UpdateExtensions ();
 			}
 
-			var extensions = AddinManager.GetExtensionObjects (addinFileSystemExtensionPath, typeof(FileSystemExtension)).Cast<FileSystemExtension> ().ToArray ();
-			for (int n=0; n<extensions.Length - 1; n++) {
-				extensions [n].Next = extensions [n + 1];
-			}
+			static void UpdateExtensions ()
+			{
+				if (!Runtime.Initialized) {
+					fileSystemChain = defaultExtension;
+					return;
+				}
 
-			if (extensions.Length > 0) {
-				extensions [extensions.Length - 1].Next = defaultExtension;
-				fileSystemChain = extensions [0];
-			} else {
-				fileSystemChain = defaultExtension;
+				var extensions = AddinManager.GetExtensionObjects (addinFileSystemExtensionPath, typeof (FileSystemExtension)).Cast<FileSystemExtension> ().ToArray ();
+				for (int n = 0; n < extensions.Length - 1; n++) {
+					extensions [n].Next = extensions [n + 1];
+				}
+
+				if (extensions.Length > 0) {
+					extensions [extensions.Length - 1].Next = defaultExtension;
+					fileSystemChain = extensions [0];
+				} else {
+					fileSystemChain = defaultExtension;
+				}
 			}
 		}
 
@@ -339,10 +344,21 @@ namespace MonoDevelop.Core
 			}
 		}
 
+		internal static void NotifyDirectoryRenamed (string oldPath, string newPath)
+		{
+			try {
+				OnFileRenamed (new FileCopyEventArgs (oldPath, newPath, true));
+				OnFileCreated (new FileEventArgs (newPath, true));
+				OnFileRemoved (new FileEventArgs (oldPath, true));
+			} catch (Exception ex) {
+				LoggingService.LogError ("Directory rename notification failed", ex);
+			}
+		}
+
 		internal static FileSystemExtension GetFileSystemForPath (string path, bool isDirectory)
 		{
 			Debug.Assert (!String.IsNullOrEmpty (path));
-			FileSystemExtension nx = fileSystemChain;
+			FileSystemExtension nx = FileSystemExtensions.Chain;
 			while (nx != null && !nx.CanHandlePath (path, isDirectory))
 				nx = nx.Next;
 			return nx;
@@ -569,7 +585,7 @@ namespace MonoDevelop.Core
 					break;
 				
 				i += 2;
-				while (i < maxLen && i == Path.DirectorySeparatorChar)
+				while (i < maxLen && path [i] == Path.DirectorySeparatorChar)
 					i++;
 			}
 
@@ -766,73 +782,68 @@ namespace MonoDevelop.Core
 			eventQueue.RaiseEvent (FileChanged, null, args);
 		}
 
-		public static Task<bool> UpdateDownloadedCacheFile (string url, string cacheFile,
+		public static async Task<bool> UpdateDownloadedCacheFile (string url, string cacheFile,
 			Func<Stream,bool> validateDownload = null, CancellationToken ct = default (CancellationToken))
 		{
-			return WebRequestHelper.GetResponseAsync (
-				() => (HttpWebRequest)WebRequest.Create (url),
-				r => {
-					//check to see if the online file has been modified since it was last downloaded
-					var localNewsXml = new FileInfo (cacheFile);
-					if (localNewsXml.Exists)
-						r.IfModifiedSince = localNewsXml.LastWriteTime;
-				},
-				ct
-			).ContinueWith (t => {
-				bool deleteTempFile = true;
-				var tempFile = cacheFile + ".temp";
+			bool deleteTempFile = true;
+			var tempFile = cacheFile + ".temp";
+			try {
+				var response = await WebRequestHelper.GetResponseAsync (
+					() => (HttpWebRequest)WebRequest.Create (url),
+					r => {
+						//check to see if the online file has been modified since it was last downloaded
+						var localNewsXml = new FileInfo (cacheFile);
+						if (localNewsXml.Exists)
+							r.IfModifiedSince = localNewsXml.LastWriteTime;
+					},
+					ct
+				).ConfigureAwait (false);
 
-				try {
+				ct.ThrowIfCancellationRequested ();
+
+				//TODO: limit this size in case open wifi hotspots provide junk data
+				if (response.StatusCode == HttpStatusCode.OK) {
+					using (var fs = File.Create (tempFile))
+						response.GetResponseStream ().CopyTo (fs, 2048);
+				}
+
+				//check the document is valid, might get bad ones from wifi hotspots etc
+				if (validateDownload != null) {
 					ct.ThrowIfCancellationRequested ();
 
-					if (t.IsFaulted) {
-						var wex = t.Exception.Flatten ().InnerException as WebException;
-						if (wex != null) {
-							var resp = wex.Response as HttpWebResponse;
-							if (resp != null && resp.StatusCode == HttpStatusCode.NotModified)
-								return false;
-						}
-					}
-
-					//TODO: limit this size in case open wifi hotspots provide junk data
-					var response = t.Result;
-					if (response.StatusCode == HttpStatusCode.OK) {
-						using (var fs = File.Create (tempFile))
-								response.GetResponseStream ().CopyTo (fs, 2048);
-					}
-
-					//check the document is valid, might get bad ones from wifi hotspots etc
-					if (validateDownload != null) {
-						ct.ThrowIfCancellationRequested ();
-
-						using (var f = File.OpenRead (tempFile)) {
-							bool validated;
-							try {
-								validated = validateDownload (f);
-							} catch (Exception ex) {
-								throw new Exception ("Failed to validate downloaded file", ex);
-							}
-							if (!validated) {
-								throw new Exception ("Failed to validate downloaded file");
-							}
-						}
-					}
-
-					ct.ThrowIfCancellationRequested ();
-
-					SystemRename (tempFile, cacheFile);
-					deleteTempFile = false;
-					return true;
-				} finally {
-					if (deleteTempFile) {
+					using (var f = File.OpenRead (tempFile)) {
+						bool validated;
 						try {
-							File.Delete (tempFile);
+							validated = validateDownload (f);
 						} catch (Exception ex) {
-							LoggingService.LogError ("Failed to delete temp download file", ex);
+							throw new Exception ("Failed to validate downloaded file", ex);
+						}
+						if (!validated) {
+							throw new Exception ("Failed to validate downloaded file");
 						}
 					}
 				}
-			}, ct);
+
+				ct.ThrowIfCancellationRequested ();
+
+				SystemRename (tempFile, cacheFile);
+				deleteTempFile = false;
+				return true;
+			} catch (Exception ex) {
+				if (ex.FlattenAggregate ().InnerException is WebException wex) {
+					if (wex.Response is HttpWebResponse resp && resp.StatusCode == HttpStatusCode.NotModified)
+						return false;
+				}
+				throw;
+			} finally {
+				if (deleteTempFile) {
+					try {
+						File.Delete (tempFile);
+					} catch (Exception ex) {
+						LoggingService.LogError ("Failed to delete temp download file", ex);
+					}
+				}
+			}
 		}
 	}
 
@@ -851,7 +862,9 @@ namespace MonoDevelop.Core
 
 			public override bool ShouldMerge (EventData other)
 			{
-				var next = (EventData<TArgs>)other;
+				var next = other as EventData<TArgs>;
+				if (next == null)
+					return false;
 				return (next.Args.GetType () == Args.GetType ()) && next.Delegate == Delegate && next.ThisObject == ThisObject;
 			}
 
@@ -876,6 +889,7 @@ namespace MonoDevelop.Core
 		}
 
 		List<EventData> events = new List<EventData> ();
+		readonly object lockObject = new object ();
 
 		int frozen;
 		object defaultSourceObject;
@@ -891,7 +905,7 @@ namespace MonoDevelop.Core
 
 		public void Freeze ()
 		{
-			lock (events) {
+			lock (lockObject) {
 				frozen++;
 			}
 		}
@@ -906,17 +920,19 @@ namespace MonoDevelop.Core
 				}
 			}
 			if (pendingEvents != null) {
-				for (int n=0; n<pendingEvents.Count; n++) {
-					EventData ev = pendingEvents [n];
-					if (ev.IsChainArgs ()) {
-						EventData next = n < pendingEvents.Count - 1 ? pendingEvents [n + 1] : null;
-						if (next != null && ev.ShouldMerge (next)) {
-							next.MergeArgs (ev);
-							continue;
+				Runtime.RunInMainThread (() => {
+					for (int n=0; n<pendingEvents.Count; n++) {
+						EventData ev = pendingEvents [n];
+						if (ev.IsChainArgs ()) {
+							EventData next = n < pendingEvents.Count - 1 ? pendingEvents [n + 1] : null;
+							if (next != null && ev.ShouldMerge (next)) {
+								ev.MergeArgs (next);
+								continue;
+							}
 						}
+						ev.Invoke ();
 					}
-					ev.Invoke ();
-				}
+				}).Ignore ();
 			}
 		}
 
@@ -927,7 +943,7 @@ namespace MonoDevelop.Core
 
 		public void RaiseEvent<TArgs> (EventHandler<TArgs> del, object thisObj, TArgs args) where TArgs:EventArgs
 		{
-			lock (events) {
+			lock (lockObject) {
 				if (frozen > 0) {
 					var ed = new EventData<TArgs> ();
 					ed.Delegate = del;
@@ -941,9 +957,10 @@ namespace MonoDevelop.Core
 				if (Runtime.IsMainThread) {
 					del.Invoke (thisObj, args);
 				} else {
-					Runtime.MainSynchronizationContext.Post (delegate {
-						del.Invoke (thisObj, args);
-					}, null);
+					Runtime.MainSynchronizationContext.Post (state => {
+						var (del1, thisObj1, args1) = (ValueTuple<EventHandler<TArgs>, object, TArgs>)state;
+						del1.Invoke (thisObj1, args1);
+					}, (del, thisObj, args));
 				}
 			}
 		}

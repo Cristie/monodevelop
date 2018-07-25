@@ -50,7 +50,7 @@ namespace MonoDevelop.Ide.Editor
 	public sealed class TextEditor : Control, ITextDocument, IDisposable
 	{
 		readonly ITextEditorImpl textEditorImpl;
-		public Microsoft.VisualStudio.Text.Editor.ITextView TextView { get; }
+		public Microsoft.VisualStudio.Text.Editor.ITextView TextView { get => textEditorImpl.TextView; set => textEditorImpl.TextView = value; }
 
 		IReadonlyTextDocument ReadOnlyTextDocument { get { return textEditorImpl.Document; } }
 
@@ -409,7 +409,8 @@ namespace MonoDevelop.Ide.Editor
 
 		public int Length {
 			get {
-				return ReadOnlyTextDocument.Length;
+				var rotd = ReadOnlyTextDocument;
+				return rotd != null ? rotd.Length : 0;
 			}
 		}
 
@@ -969,6 +970,8 @@ namespace MonoDevelop.Ide.Editor
 			if (isDisposed)
 				return;
 			Runtime.AssertMainThread ();
+			this.TextView.Close ();
+
 			// Break fileTypeCondition circular event handling reference.
 			fileTypeCondition = null;
 			isDisposed = true;
@@ -978,8 +981,6 @@ namespace MonoDevelop.Ide.Editor
 			foreach (var provider in textEditorImpl.TooltipProvider)
 				provider.Dispose ();
 			textEditorImpl.Dispose ();
-
-			this.TextView.Close();
 
 			base.Dispose (disposing);
 		}
@@ -1001,7 +1002,7 @@ namespace MonoDevelop.Ide.Editor
 			}
 		}
 
-		internal IEditorActionHost EditorActionHost {
+		internal Microsoft.VisualStudio.Text.Operations.IEditorOperations EditorOperations {
 			get {
 				return textEditorImpl.Actions;
 			}
@@ -1051,12 +1052,16 @@ namespace MonoDevelop.Ide.Editor
 			MimeTypeChanged += TextEditor_MimeTypeChanged;
 			TextEditor_MimeTypeChanged (null, null);
 
-			this.TextView = Microsoft.VisualStudio.Platform.PlatformCatalog.Instance.TextEditorFactoryService.CreateTextView(this) as Microsoft.VisualStudio.Text.Editor.ITextView;
+			this.TextView = Microsoft.VisualStudio.Platform.PlatformCatalog.Instance.TextEditorFactoryService.CreateTextView(this);
 		}
 
-		void TextEditor_FileNameChanged (object sender, EventArgs e)
+		async void TextEditor_FileNameChanged (object sender, EventArgs e)
 		{
 			fileTypeCondition.SetFileName (FileName);
+			EditorConfigService.RemoveEditConfigContext (FileName).Ignore ();
+			var context = await EditorConfigService.GetEditorConfigContext (FileName, default (CancellationToken));
+			if (context != null && Options is DefaultSourceEditorOptions options)
+				options.SetContext (context);
 		}
 
 		void TextEditor_MimeTypeChanged (object sender, EventArgs e)
@@ -1179,14 +1184,19 @@ namespace MonoDevelop.Ide.Editor
 			
 			TextEditorExtension last = null;
 			foreach (var ext in extensions) {
-				if (ext.IsValidInContext (documentContext)) {
-					if (last != null) {
-						last.Next = ext;
+				try {
+					if (ext.IsValidInContext (documentContext)) {
+						ext.Initialize (this, documentContext);
+						//if either call to ext throws, it will be omitted from the chain
+						if (last != null) {
+							last.Next = ext;
+						} else {
+							textEditorImpl.EditorExtension = ext;
+						}
 						last = ext;
-					} else {
-						textEditorImpl.EditorExtension = last = ext;
 					}
-					ext.Initialize (this, documentContext);
+				} catch (Exception e) {
+					LoggingService.LogError ($"Error while initializing text editor extension: {ext.GetType ().FullName}", e);
 				}
 			}
 			DocumentContext = documentContext;
@@ -1516,7 +1526,7 @@ namespace MonoDevelop.Ide.Editor
 		}
 
 		internal IEnumerable<IDocumentLine> VisibleLines { get { return textEditorImpl.VisibleLines; } }
-		internal event EventHandler<LineEventArgs> LineShown { add { textEditorImpl.LineShown += value; } remove { textEditorImpl.LineShown -= value; } }
+		internal event EventHandler<LineEventArgs> LineShowing { add { textEditorImpl.LineShowing += value; } remove { textEditorImpl.LineShowing -= value; } }
 
 		internal ITextEditorImpl Implementation { get { return this.textEditorImpl; } }
 
@@ -1545,6 +1555,11 @@ namespace MonoDevelop.Ide.Editor
 		public void ShowTooltipWindow (Components.Window window, TooltipWindowOptions options = null)
 		{
 			textEditorImpl.ShowTooltipWindow (window, options);
+		}
+
+		public void HideTooltipWindow ()
+		{
+			textEditorImpl.HideTooltipWindow ();
 		}
 
 		public Task<ScopeStack> GetScopeStackAsync (int offset, CancellationToken cancellationToken)

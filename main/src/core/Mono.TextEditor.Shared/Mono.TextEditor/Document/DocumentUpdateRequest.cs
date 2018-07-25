@@ -50,8 +50,12 @@ namespace Mono.TextEditor
 	
 	class UpdateAll : DocumentUpdateRequest
 	{
+		public bool RemoveLineCache { get; set; }
+
 		public override void Update (MonoTextEditor editor)
 		{
+			if (RemoveLineCache)
+				editor.TextViewMargin.PurgeLayoutCache ();
 			editor.QueueDraw ();
 		}
 	}
@@ -59,7 +63,9 @@ namespace Mono.TextEditor
 	class LineUpdate : DocumentUpdateRequest
 	{
 		int line;
-		
+
+		public bool RemoveLineCache { get; set; }
+
 		public LineUpdate (int line)
 		{
 			this.line = line;
@@ -67,14 +73,16 @@ namespace Mono.TextEditor
 		
 		public override void Update (MonoTextEditor editor)
 		{
-			editor.RedrawLine (line);
+			editor.RedrawLine (line, RemoveLineCache);
 		}
 	}
 	
 	class MultipleLineUpdate : DocumentUpdateRequest
 	{
 		int start, end;
-		
+
+		public bool RemoveLineCache { get; set; }
+
 		public MultipleLineUpdate (int start, int end)
 		{
 			this.start = start;
@@ -84,13 +92,9 @@ namespace Mono.TextEditor
 		public override void Update (MonoTextEditor editor)
 		{
 			if (start == end) {
-				editor.TextViewMargin.RemoveCachedLine (start);
-				editor.RedrawLine (start);
+				editor.RedrawLine (start, RemoveLineCache);
 			} else {
-				for (int i = start; i <= end; i++) {
-					editor.TextViewMargin.RemoveCachedLine (i);
-				}
-				editor.RedrawLines (start, end);
+				editor.RedrawLines (start, end, RemoveLineCache);
 			}
 		}
 	}

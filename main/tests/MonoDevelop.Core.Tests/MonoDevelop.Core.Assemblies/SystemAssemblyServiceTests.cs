@@ -51,6 +51,22 @@ namespace MonoDevelop.Core.Assemblies
 			Assert.That(result, Is.EqualTo(withSystemRuntime));
 		}
 
+		[TestCase (true, "System.Collections.Immutable.dll")]
+		[TestCase (false, "MonoDevelop.Core.dll")]
+		public void RequiresFacadeAssemblies (bool addFacades, string relativeDllPath)
+		{
+			var result = SystemAssemblyService.RequiresFacadeAssemblies (relativeDllPath);
+			Assert.That (result, Is.EqualTo (addFacades));
+		}
+
+		[TestCase (true, "System.Collections.Immutable.dll")]
+		[TestCase (false, "MonoDevelop.Core.dll")]
+		public async Task RequiresFacadeAssembliesAsync (bool addFacades, string relativeDllPath)
+		{
+			var result = await SystemAssemblyService.RequiresFacadeAssembliesAsync (relativeDllPath);
+			Assert.That (result, Is.EqualTo (addFacades));
+		}
+
 		[Test]
 		public void CheckReferencesAreOk()
 		{
@@ -60,7 +76,7 @@ namespace MonoDevelop.Core.Assemblies
 				"System"
 			};
 
-			var references = SystemAssemblyService.GetAssemblyReferences(Path.Combine(Path.GetDirectoryName (GetType().Assembly.Location), "..", "bin", "Mono.Cecil.dll"));
+			var references = SystemAssemblyService.GetAssemblyReferences(Path.Combine(Path.GetDirectoryName (GetType().Assembly.Location), "Mono.Cecil.dll"));
 			Assert.That(references, Is.EquivalentTo(names));
 		}
 	}

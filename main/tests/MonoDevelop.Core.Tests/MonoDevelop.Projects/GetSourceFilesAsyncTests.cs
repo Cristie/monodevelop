@@ -29,6 +29,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using MonoDevelop.Core;
+using MonoDevelop.Projects.MSBuild;
 using NUnit.Framework;
 using UnitTests;
 
@@ -38,6 +39,7 @@ namespace MonoDevelop.Projects
 	public class GetSourceFilesAsyncTests : TestBase
 	{
 		TaskCompletionSource<object> fileChangeNotification;
+		string waitingForFileNameChange;
 
 		[SetUp]
 		public void TestSetUp ()
@@ -113,15 +115,22 @@ namespace MonoDevelop.Projects
 				File.Delete (generatedFileName);
 			}
 
-			await project.PerformGeneratorAsync (project.Configurations[0].Selector, "UpdateGeneratedFiles");
+			var id = new object ();
+			try {
+				waitingForFileNameChange = generatedFileName;
+				await FileWatcherService.WatchDirectories (id, new [] { project.BaseDirectory });
+				await project.PerformGeneratorAsync (project.Configurations[0].Selector, "UpdateGeneratedFiles");
 
-			// we need to wait for the file notification to be posted
-			await Task.Run (() => {
-				fileChangeNotification.Task.Wait (TimeSpan.FromMilliseconds (10000));
-			});
-			          
-			Assert.IsTrue (fileChangeNotification.Task.IsCompleted, "Performing the generator should have fired a file change event");
-			project.Dispose ();
+				// we need to wait for the file notification to be posted
+				await Task.Run (() => {
+					fileChangeNotification.Task.Wait (TimeSpan.FromMilliseconds (10000));
+				});
+
+				Assert.IsTrue (fileChangeNotification.Task.IsCompleted, "Performing the generator should have fired a file change event");
+				project.Dispose ();
+			} finally {
+				await FileWatcherService.WatchDirectories (id, null);
+			}
 		}
 
 		[Test()]
@@ -148,7 +157,8 @@ namespace MonoDevelop.Projects
 		{
 			var tcs = fileChangeNotification;
 			if (tcs != null) {
-				tcs.TrySetResult (null);
+				if (e.Any (info => info.FileName == waitingForFileNameChange))
+					tcs.TrySetResult (null);
 			}
 		}
 
@@ -166,6 +176,41 @@ namespace MonoDevelop.Projects
 			sourceFiles = await project.GetSourceFilesAsync (project.Configurations ["Release|x86"].Selector);
 
 			Assert.IsFalse (sourceFiles.Any (f => f.FilePath.FileName == "Conditioned.cs"));
+			project.Dispose ();
+		}
+
+		[Test]
+		public async Task ImportWithCoreCompileDependsOnAddedAfterSourceFilesCached ()
+		{
+			string projectFile = Util.GetSampleProject ("project-with-corecompiledepends", "consoleproject.csproj");
+			var project = (Project)await Services.ProjectService.ReadSolutionItem (Util.GetMonitor (), projectFile);
+
+			var projectFiles = project.Files.Where (f => f.Subtype != Subtype.Directory).ToList ();
+			var sourceFiles = await project.GetSourceFilesAsync (project.Configurations[0].Selector);
+
+			Assert.AreEqual (projectFiles.Count, sourceFiles.Count ());
+			Assert.AreEqual (0, sourceFiles.Count ());
+
+			string modifiedHint = null;
+			project.Modified += (sender, args) => modifiedHint = args.First ().Hint;
+
+			var before = new MSBuildItem (); // Ensures import added at end of project.
+			project.MSBuildProject.AddNewImport ("consoleproject-import.targets", null, before);
+			Assert.AreEqual ("Files", modifiedHint);
+
+			sourceFiles = await project.GetSourceFilesAsync (project.Configurations[0].Selector);
+
+			Assert.IsTrue (sourceFiles.Any (f => f.FilePath.FileName == "GeneratedFile.g.cs"));
+
+			modifiedHint = null;
+			project.MSBuildProject.RemoveImport ("consoleproject-import.targets");
+			Assert.AreEqual ("Files", modifiedHint);
+
+			sourceFiles = await project.GetSourceFilesAsync (project.Configurations[0].Selector);
+
+			Assert.IsFalse (sourceFiles.Any (f => f.FilePath.FileName == "GeneratedFile.g.cs"));
+			Assert.AreEqual (0, sourceFiles.Count ());
+
 			project.Dispose ();
 		}
 	}

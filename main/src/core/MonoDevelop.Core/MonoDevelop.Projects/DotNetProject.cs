@@ -607,11 +607,11 @@ namespace MonoDevelop.Projects
 			}
 		}
 
+		[Obsolete]
 		internal protected override void PopulateOutputFileList (List<FilePath> list, ConfigurationSelector configuration)
 		{
 			base.PopulateOutputFileList (list, configuration);
-			DotNetProjectConfiguration conf = GetConfiguration (configuration) as DotNetProjectConfiguration;
-			if (conf == null)
+			if (!(GetConfiguration (configuration) is DotNetProjectConfiguration conf))
 				return;
 
 			// Debug info file
@@ -645,6 +645,7 @@ namespace MonoDevelop.Projects
 		[ThreadStatic]
 		static HashSet<DotNetProject> processedProjects;
 
+		[Obsolete]
 		internal protected override void PopulateSupportFileList (FileCopySet list, ConfigurationSelector configuration)
 		{
 			try {
@@ -660,6 +661,7 @@ namespace MonoDevelop.Projects
 			}
 		}
 
+		[Obsolete]
 		void PopulateSupportFileListInternal (FileCopySet list, ConfigurationSelector configuration)
 		{
 			if (supportReferDistance <= 2)
@@ -910,10 +912,10 @@ namespace MonoDevelop.Projects
 		internal protected virtual async Task<List<AssemblyReference>> OnGetReferencedAssemblies (ConfigurationSelector configuration)
 		{
 			List<AssemblyReference> result = new List<AssemblyReference> ();
-			if (CheckUseMSBuildEngine (configuration)) {
-					// Get the references list from the msbuild project
-					using (Counters.ResolveMSBuildReferencesTimer.BeginTiming (GetProjectEventMetadata (configuration)))
-						result = await RunResolveAssemblyReferencesTarget (configuration);
+			if (MSBuildProject.UseMSBuildEngine) {
+				// Get the references list from the msbuild project
+				using (Counters.ResolveMSBuildReferencesTimer.BeginTiming (GetProjectEventMetadata (configuration)))
+					result.AddRange (await RunResolveAssemblyReferencesTarget (configuration));
 			} else {
 				foreach (ProjectReference pref in References) {
 					if (pref.ReferenceType != ReferenceType.Project) {
@@ -943,7 +945,12 @@ namespace MonoDevelop.Projects
 			if (!noStdLib) {
 				var sa = AssemblyContext.GetAssemblies (TargetFramework).FirstOrDefault (a => a.Name == "System.Core" && a.Package.IsFrameworkPackage);
 				if (sa != null) {
-					var ar = new AssemblyReference (sa.Location);
+					var props = new MSBuildPropertyGroupEvaluated (null);
+					var trueString = "true";
+					var property = new MSBuildPropertyEvaluated (null, "Implicit", trueString, trueString);
+					props.SetProperty (property.Name, property);
+
+					var ar = new AssemblyReference (sa.Location, props);
 					if (!result.Contains (ar))
 						result.Add (ar);
 				}
@@ -964,7 +971,7 @@ namespace MonoDevelop.Projects
 					} else {
 						fullPath = Path.GetFullPath (refFilename.FilePath);
 					}
-					if (await SystemAssemblyService.ContainsReferenceToSystemRuntimeAsync (fullPath)) {
+					if (await SystemAssemblyService.RequiresFacadeAssembliesAsync (fullPath)) {
 						addFacadeAssemblies = true;
 						break;
 					}
@@ -972,29 +979,61 @@ namespace MonoDevelop.Projects
 			}
 
 			if (addFacadeAssemblies) {
-				var runtime = TargetRuntime ?? MonoDevelop.Core.Runtime.SystemAssemblyService.DefaultRuntime;
-				var facades = runtime.FindFacadeAssembliesForPCL (TargetFramework);
-				foreach (var facade in facades) {
-					if (!File.Exists (facade))
-						continue;
-					var ar = new AssemblyReference (facade);
-					if (!result.Contains (ar))
-						result.Add (ar);
+				var facades = await ProjectExtension.OnGetFacadeAssemblies ();
+				if (facades != null) {
+					foreach (var facade in facades) {
+						if (!result.Contains (facade))
+							result.Add (facade);
+					}
 				}
 			}
 			return result;
 		}
 
+		internal protected virtual Task<List<AssemblyReference>> OnGetFacadeAssemblies ()
+		{
+			var sharedProperties = new MSBuildPropertyGroupEvaluated (null);
+			var resolvedFrom = "ImplicitlyExpandDesignTimeFacades";
+			var property = new MSBuildPropertyEvaluated (null, "ResolvedFrom", resolvedFrom, resolvedFrom);
+			sharedProperties.SetProperty (property.Name, property);
+
+			List<AssemblyReference> result = null;
+			var runtime = TargetRuntime ?? Runtime.SystemAssemblyService.DefaultRuntime;
+			var facades = runtime.FindFacadeAssembliesForPCL (TargetFramework);
+			foreach (var facade in facades) {
+				if (!File.Exists (facade))
+					continue;
+				if (result == null)
+					result = new List<AssemblyReference> ();
+
+				var ar = new AssemblyReference (facade, sharedProperties);
+				result.Add (ar);
+			}
+			return Task.FromResult (result);
+		}
+
 		AsyncCriticalSection referenceCacheLock = new AsyncCriticalSection ();
-		Dictionary<string, List<AssemblyReference>> referenceCache = new Dictionary<string, List<AssemblyReference>> ();
+		ImmutableDictionary<string, List<AssemblyReference>> referenceCache = ImmutableDictionary<string, List<AssemblyReference>>.Empty;
+		bool referenceCacheNeedsRefresh;
 
 		async Task<List<AssemblyReference>> RunResolveAssemblyReferencesTarget (ConfigurationSelector configuration)
 		{
 			List<AssemblyReference> refs = null;
 			var confId = (GetConfiguration (configuration) ?? DefaultConfiguration)?.Id ?? "";
 
+			// Check the cache before waiting for the lock, which may be very slow
+			if (!referenceCacheNeedsRefresh && referenceCache.TryGetValue (confId, out refs))
+				return refs;
+
 			using (await referenceCacheLock.EnterAsync ().ConfigureAwait (false)) {
-				// Check the cache before starting the task
+
+				if (referenceCacheNeedsRefresh) {
+					// Refresh requested. Clear the whole cache.
+					referenceCache = ImmutableDictionary<string, List<AssemblyReference>>.Empty;
+					referenceCacheNeedsRefresh = false;
+				}
+
+				// Check again the cache before starting the task
 				if (referenceCache.TryGetValue (confId, out refs))
 					return refs;
 
@@ -1005,12 +1044,13 @@ namespace MonoDevelop.Projects
 				context.BuilderQueue = BuilderQueue.ShortOperations;
 				context.LoadReferencedProjects = false;
 				context.LogVerbosity = MSBuildVerbosity.Quiet;
+				context.GlobalProperties.SetValue ("Silent", true);
 
 				var result = await RunTarget (monitor, "ResolveAssemblyReferences", configuration, context);
 
 				refs = result.Items.Select (i => new AssemblyReference (i.Include, i.Metadata)).ToList ();
 
-				referenceCache [confId] = refs;
+				referenceCache = referenceCache.SetItem (confId, refs);
 			}
 			return refs;
 		}
@@ -1026,7 +1066,7 @@ namespace MonoDevelop.Projects
 		internal protected virtual async Task<List<PackageDependency>> OnGetPackageDependencies (ConfigurationSelector configuration, CancellationToken cancellationToken)
 		{
 			var result = new List<PackageDependency> ();
-			if (CheckUseMSBuildEngine (configuration)) {
+			if (MSBuildProject.UseMSBuildEngine) {
 				// Get the references list from the msbuild project
 				using (Counters.ResolveMSBuildReferencesTimer.BeginTiming (GetProjectEventMetadata (configuration)))
 					return await RunResolvePackageDependenciesTarget (configuration, cancellationToken);
@@ -1034,15 +1074,27 @@ namespace MonoDevelop.Projects
 				return new List<PackageDependency> ();
 		}
 
-		Dictionary<string, List<PackageDependency>> packageDependenciesCache = new Dictionary<string, List<PackageDependency>> ();
+		ImmutableDictionary<string, List<PackageDependency>> packageDependenciesCache = ImmutableDictionary<string, List<PackageDependency>>.Empty;
 		AsyncCriticalSection packageDependenciesCacheLock = new AsyncCriticalSection ();
+		bool packageDependenciesNeedRefresh;
 
 		async Task<List<PackageDependency>> RunResolvePackageDependenciesTarget (ConfigurationSelector configuration, CancellationToken cancellationToken)
 		{
 			List<PackageDependency> packageDependencies = null;
 			var confId = (GetConfiguration (configuration) ?? DefaultConfiguration)?.Id ?? "";
 
+			// Check the cache before entering the lock, which may be slow
+			if (!packageDependenciesNeedRefresh && packageDependenciesCache.TryGetValue (confId, out packageDependencies))
+				return packageDependencies;
+			
 			using (await packageDependenciesCacheLock.EnterAsync ().ConfigureAwait (false)) {
+
+				if (packageDependenciesNeedRefresh) {
+					// Refresh requested. Clear the whole cache.
+					packageDependenciesCache = ImmutableDictionary<string, List<PackageDependency>>.Empty;
+					packageDependenciesNeedRefresh = false;
+				}
+
 				// Check the cache before starting the task
 				if (packageDependenciesCache.TryGetValue (confId, out packageDependencies))
 					return packageDependencies;
@@ -1060,9 +1112,14 @@ namespace MonoDevelop.Projects
 				if (result == null)
 					return new List<PackageDependency> ();
 
+				if (monitor.CancellationToken.IsCancellationRequested && !result.Items.Any ()) {
+					// Avoid caching 0 items which can happen if a cancellation occurs.
+					return new List<PackageDependency> ();
+				}
+
 				packageDependencies = result.Items.Select (i => PackageDependency.Create (i)).Where (dependency => dependency != null).ToList ();
 
-				packageDependenciesCache [confId] = packageDependencies;
+				packageDependenciesCache = packageDependenciesCache .SetItem (confId, packageDependencies);
 			}
 
 			return packageDependencies;
@@ -1088,12 +1145,9 @@ namespace MonoDevelop.Projects
 		{
 			// Clean the reference and package cache
 
-			using (await referenceCacheLock.EnterAsync ().ConfigureAwait (false))
-				referenceCache.Clear ();
+			referenceCacheNeedsRefresh = true;
+			packageDependenciesNeedRefresh = true;
 
-			using (await packageDependenciesCacheLock.EnterAsync ().ConfigureAwait (false))
-				packageDependenciesCache.Clear ();
-			
 			await base.OnClearCachedData ();
 		}
 
@@ -1140,12 +1194,14 @@ namespace MonoDevelop.Projects
 			return project?.FileName;
 		}
 
+		[Obsolete]
 		protected override Task<BuildResult> DoBuild (ProgressMonitor monitor, ConfigurationSelector configuration)
 		{
 			var handler = new MD1DotNetProjectHandler (this);
 			return handler.RunTarget (monitor, "Build", configuration);
 		}
 
+		[Obsolete]
 		protected override Task<BuildResult> DoClean (ProgressMonitor monitor, ConfigurationSelector configuration)
 		{
 			var handler = new MD1DotNetProjectHandler (this);
@@ -1242,8 +1298,14 @@ namespace MonoDevelop.Projects
 
 			var config = (DotNetProjectConfiguration) GetConfiguration (configuration);
 			return Files.Any (file => file.BuildAction == BuildAction.EmbeddedResource
-					&& String.Compare (Path.GetExtension (file.FilePath), ".resx", StringComparison.OrdinalIgnoreCase) == 0
-					&& MD1DotNetProjectHandler.IsResgenRequired (file.FilePath, config.IntermediateOutputDirectory.Combine (file.ResourceId)));
+					&& file.FilePath.HasExtension (".resx")
+					&& IsResourceUpToDate (file.FilePath, config.IntermediateOutputDirectory.Combine (file.ResourceId)));
+
+			bool IsResourceUpToDate (string resxFile, string outputResources)
+			{
+				var outInfo = new FileInfo (outputResources);
+				return !outInfo.Exists || new FileInfo (resxFile).LastWriteTime < outInfo.LastWriteTime;
+			}
 		}
 
 		protected internal override DateTime OnGetLastBuildTime (ConfigurationSelector configuration)
@@ -1274,7 +1336,7 @@ namespace MonoDevelop.Projects
 
 		public FilePath GetAssemblyDebugInfoFile (ConfigurationSelector configuration, FilePath exeFile)
 		{
-			if (CheckUseMSBuildEngine (configuration)) {
+			if (MSBuildProject.UseMSBuildEngine) {
 				var mono = TargetRuntime as MonoTargetRuntime;
 				if (mono != null) {
 					var version = mono.MonoRuntimeInfo?.RuntimeVersion;
@@ -1454,11 +1516,13 @@ namespace MonoDevelop.Projects
 			return baseFiles;
 		}
 
+		[Obsolete ("Use MSBuild")]
 		internal Task<BuildResult> Compile (ProgressMonitor monitor, BuildData buildData)
 		{
 			return ProjectExtension.OnCompile (monitor, buildData);
 		}
 
+		[Obsolete ("Use MSBuild")]
 		protected virtual Task<BuildResult> OnCompile (ProgressMonitor monitor, BuildData buildData)
 		{
 			return MD1DotNetProjectHandler.Compile (monitor, this, buildData);
@@ -1502,7 +1566,7 @@ namespace MonoDevelop.Projects
 			string root = null;
 			string dirNamespc = null;
 			string defaultNmspc = !string.IsNullOrEmpty (defaultNamespace)
-				? SanitisePotentialNamespace (defaultNamespace)
+				? SanitisePotentialNamespace (defaultNamespace) ?? "Application"
 				: SanitisePotentialNamespace (project.Name) ?? "Application";
 
 			if (string.IsNullOrEmpty (fileName)) {
@@ -1550,17 +1614,17 @@ namespace MonoDevelop.Projects
 
 		static string GetHierarchicalNamespace (string relativePath)
 		{
-			StringBuilder sb = new StringBuilder (relativePath);
+			StringBuilder sb = StringBuilderCache.Allocate (relativePath);
 			for (int i = 0; i < sb.Length; i++) {
 				if (sb[i] == Path.DirectorySeparatorChar)
 					sb[i] = '.';
 			}
-			return sb.ToString ();
+			return StringBuilderCache.ReturnAndFree (sb);
 		}
 
 		static string SanitisePotentialNamespace (string potential)
 		{
-			StringBuilder sb = new StringBuilder ();
+			StringBuilder sb = StringBuilderCache.Allocate ();
 			foreach (char c in potential) {
 				if (char.IsLetter (c) || c == '_' || (sb.Length > 0 && (char.IsLetterOrDigit (sb[sb.Length - 1]) || sb[sb.Length - 1] == '_') && (c == '.' || char.IsNumber (c)))) {
 					sb.Append (c);
@@ -1570,9 +1634,10 @@ namespace MonoDevelop.Projects
 				if (sb[sb.Length - 1] == '.')
 					sb.Remove (sb.Length - 1, 1);
 
-				return sb.ToString ();
-			} else
-				return null;
+				return StringBuilderCache.ReturnAndFree (sb);
+			}
+			StringBuilderCache.Free (sb);
+			return null;
 		}
 
 		void RuntimeSystemAssemblyServiceDefaultRuntimeChanged (object sender, EventArgs e)
@@ -1627,6 +1692,7 @@ namespace MonoDevelop.Projects
 
 		protected abstract DotNetCompilerParameters OnCreateCompilationParameters (DotNetProjectConfiguration config, ConfigurationKind kind);
 
+		[Obsolete]
 		internal protected virtual BuildResult OnCompileSources (ProjectItemCollection items, DotNetProjectConfiguration configuration, ConfigurationSelector configSelector, ProgressMonitor monitor)
 		{
 			throw new NotSupportedException ();
@@ -2003,6 +2069,11 @@ namespace MonoDevelop.Projects
 				return Project.OnGetReferencedAssemblyProjects (configuration);
 			}
 
+			internal protected override Task<List<AssemblyReference>> OnGetFacadeAssemblies ()
+			{
+				return Project.OnGetFacadeAssemblies ();
+			}
+
 #pragma warning disable 672 // Member overrides obsolete member
 			internal protected override ExecutionCommand OnCreateExecutionCommand (ConfigurationSelector configSel, DotNetProjectConfiguration configuration)
 			{
@@ -2030,6 +2101,7 @@ namespace MonoDevelop.Projects
 				Project.OnReferencedAssembliesChanged ();
 			}
 
+			[Obsolete]
 			internal protected override Task<BuildResult> OnCompile (ProgressMonitor monitor, BuildData buildData)
 			{
 				return Project.OnCompile (monitor, buildData);

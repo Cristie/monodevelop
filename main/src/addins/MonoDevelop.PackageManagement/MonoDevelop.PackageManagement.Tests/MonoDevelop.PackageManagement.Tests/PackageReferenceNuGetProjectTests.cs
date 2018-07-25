@@ -54,11 +54,11 @@ namespace MonoDevelop.PackageManagement.Tests
 			project = new TestablePackageReferenceNuGetProject (dotNetProject);
 		}
 
-		void AddDotNetProjectPackageReference (string packageId, string version)
+		ProjectPackageReference AddDotNetProjectPackageReference (string packageId, string version)
 		{
 			var packageReference = ProjectPackageReference.Create (packageId, version);
-
 			dotNetProject.Items.Add (packageReference);
+			return packageReference;
 		}
 
 		Task<bool> UninstallPackageAsync (string packageId, string version)
@@ -84,6 +84,11 @@ namespace MonoDevelop.PackageManagement.Tests
 		{
 			var specs = await project.GetPackageSpecsAsync (cacheContext);
 			return specs.Single ();
+		}
+
+		void AddRestoreProjectStyle (string restoreStyle)
+		{
+			dotNetProject.ProjectProperties.SetValue ("RestoreProjectStyle", restoreStyle);
 		}
 
 		[Test]
@@ -176,17 +181,22 @@ namespace MonoDevelop.PackageManagement.Tests
 			Assert.AreEqual (MessageLevel.Warning, context.LastLogLevel);
 		}
 
+		/// <summary>
+		/// Original PackageReference in project should be updated with new version and not removed since this
+		/// will keep any custom metadata added to the PackageReference.
+		/// </summary>
 		[Test]
 		public async Task InstallPackageAsync_PackageAlreadyInstalledWithDifferentVersion_OldPackageReferenceIsRemoved ()
 		{
 			CreateNuGetProject ("MyProject");
-			AddDotNetProjectPackageReference ("NUnit", "2.6.1");
+			var nunitPackageReference = AddDotNetProjectPackageReference ("NUnit", "2.6.1");
+			nunitPackageReference.Metadata.SetValue ("PrivateAssets", "All");
 
 			bool result = await InstallPackageAsync ("NUnit", "3.6.0");
 
-			var packageReference = dotNetProject.Items.OfType<ProjectPackageReference> ()
-				.Single ()
-				.CreatePackageReference ();
+			var projectPackageReference = dotNetProject.Items.OfType<ProjectPackageReference> ()
+				.Single ();
+			var packageReference = projectPackageReference.CreatePackageReference ();
 
 			Assert.AreEqual ("NUnit", packageReference.PackageIdentity.Id);
 			Assert.AreEqual ("3.6.0", packageReference.PackageIdentity.Version.ToNormalizedString ());
@@ -194,6 +204,7 @@ namespace MonoDevelop.PackageManagement.Tests
 			Assert.IsTrue (project.IsSaved);
 			Assert.IsFalse (packageReference.HasAllowedVersions);
 			Assert.IsNull (packageReference.AllowedVersions);
+			Assert.AreEqual ("All", projectPackageReference.Metadata.GetValue ("PrivateAssets"));
 		}
 
 		[Test]
@@ -286,6 +297,36 @@ namespace MonoDevelop.PackageManagement.Tests
 			var nugetProject = PackageReferenceNuGetProject.Create (dotNetProject);
 
 			Assert.IsNotNull (nugetProject);
+		}
+
+		/// <summary>
+		/// If a project has the MSBuild property RestoreProjectStyle set to PackageReference
+		/// then it should be restored in the same way as if it had PackageReferences
+		/// even if the project does not have any.
+		///
+		/// https://www.hanselman.com/blog/ReferencingNETStandardAssembliesFromBothNETCoreAndNETFramework.aspx
+		/// </summary>
+		[TestCase ("PackageReference")]
+		[TestCase ("packagereference")]
+		public void Create_RestoreProjectStyle_ReturnsNuGetProject (string restoreStyle)
+		{
+			CreateNuGetProject ();
+			AddRestoreProjectStyle (restoreStyle);
+
+			var nugetProject = PackageReferenceNuGetProject.Create (dotNetProject);
+
+			Assert.IsNotNull (nugetProject);
+		}
+
+		[Test]
+		public void Create_RestoreProjectStyleIsNotPackageReference_ReturnsNull ()
+		{
+			CreateNuGetProject ();
+			AddRestoreProjectStyle ("Unknown");
+
+			var nugetProject = PackageReferenceNuGetProject.Create (dotNetProject);
+
+			Assert.IsNull (nugetProject);
 		}
 	}
 }
